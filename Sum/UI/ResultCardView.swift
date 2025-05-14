@@ -3,13 +3,18 @@ import SwiftUI
 struct ResultCardView: View {
     let sum: Double
     let numbers: [Double]
+    private let indexed: [IndexedNumber]
+    private let formatter: NumberFormatter
 
-    // Formatter so “478000” ⇒ “478,000”
-    private var formatter: NumberFormatter {
-        let nf          = NumberFormatter()
-        nf.numberStyle  = .decimal
+    init(sum: Double, numbers: [Double]) {
+        self.sum      = sum
+        self.numbers  = numbers
+        self.indexed  = numbers.enumerated().map { .init(index: $0, value: $1) }
+
+        let nf = NumberFormatter()
+        nf.numberStyle = .decimal
         nf.maximumFractionDigits = 2
-        return nf
+        self.formatter = nf
     }
 
     var body: some View {
@@ -32,7 +37,6 @@ struct ResultCardView: View {
                     .foregroundStyle(.secondary)
 
                 // Wrap numbers in a simple flow-layout
-                let indexed = numbers.enumerated().map { IndexedNumber(index: $0.offset, value: $0.element) }
                 FlexibleView(data: indexed,
                              spacing: 8, alignment: .leading) { item in
                     let value = item.value

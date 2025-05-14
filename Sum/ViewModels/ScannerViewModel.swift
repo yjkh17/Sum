@@ -3,7 +3,6 @@ import SwiftData
 
 @MainActor
 final class ScannerViewModel: ObservableObject {
-    @Published var isShowingScanner = false
     // Store numbers from each source separately
     @Published private(set) var capturedNumbers: [Double] = []    // Document scanner
     @Published private(set) var photoNumbers:    [Double] = []    // Photo picker
@@ -31,9 +30,6 @@ final class ScannerViewModel: ObservableObject {
     @AppStorage("numberSystem") var storedSystem: NumberSystem = .western {
         didSet { TextScannerService.currentSystem = storedSystem }
     }
-
-    /// استدعاء من الـ UI
-    func startScan() { }
 
     /// استدعاء من DocumentScannerView عند اكتمال المسح
     func handleScanCompleted(_ newNumbers: [Double]) {
@@ -80,6 +76,7 @@ final class ScannerViewModel: ObservableObject {
 
     /// يُنادى من FixDigitSheet عند انتهاء التصحيحات
     func finishFixes() {
+        pendingFixes.removeAll()          // صفّر طابور الإصلاحات
         isShowingFixSheet = false
         recalcTotals()
     }

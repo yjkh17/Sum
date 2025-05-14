@@ -1,5 +1,3 @@
-
-
 import UIKit
 
 /// يحفظ قصاصات الأرقام المصحَّحة فى Documents/TrainingSamples
@@ -16,12 +14,14 @@ final class SampleStore {
         return url
     }()
 
+    /// يحفظ القصاصة بعد تصغيرها إلى ‎28×28‎ لتقليل الحجم
     func save(image cg: CGImage, label: Int) {
-        let ui = UIImage(cgImage: cg)
-        guard let data = ui.pngData() else { return }
+        let ui  = UIImage(cgImage: cg)
+        let img = ui.preparingThumbnail(of: .init(width: 28, height: 28)) ?? ui
+        guard let data = img.pngData() else { return }
         let name = "\(label)_\(UUID().uuidString).png"
-        let url  = dir.appendingPathComponent(name)
-        try? data.write(to: url)
+        let url = dir.appendingPathComponent(name)
+        do { try data.write(to: url, options: .atomic) }
+        catch { print("[SampleStore] save failed:", error) }
     }
 }
-

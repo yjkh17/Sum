@@ -1,10 +1,3 @@
-//
-//  ContentView.swift
-//  Sum
-//
-//  Created by Yousef Jawdat on 13/05/2025.
-//
-
 import SwiftUI
 import SwiftData
 
@@ -13,31 +6,63 @@ struct ContentView: View {
     @Query private var records: [ScanRecord]
     @StateObject private var scanVM = ScannerViewModel()
     @StateObject private var navVM  = NavigationViewModel()
+    @State private var liveCrop: CGRect? = nil        // live-OCR crop rectangle
     /// iPhone = .compact  /  iPad = .regular
     @Environment(\.horizontalSizeClass) private var hSize
 
     // MARK: - Re-usable toolbar
     @ToolbarContentBuilder
     private var toolBarContent: some ToolbarContent {
-        ToolbarItem(placement: .navigationBarLeading) {
-            Button("Scan Numbers") { navVM.isShowingScanner = true }
-        }
-        ToolbarItem(placement: .navigationBarLeading) {
-            Button("Upload Photo") { navVM.isShowingPhotoPicker = true }
-        }
-        ToolbarItem(placement: .navigationBarLeading) {
-            if #available(iOS 17.0, *) {
-                Button("Live OCR") { scanVM.startLiveScan(); navVM.isShowingLiveScanner = true }
+        // Consolidated leading buttons with SF-Symbol icons
+        ToolbarItemGroup(placement: .navigationBarLeading) {
+            Spacer().frame(width: 8)          // فراغ أوضح مع حافة الشاشة
+            Button {
+                navVM.isShowingScanner = true
+            } label: {
+                Label("Scan", systemImage: "camera.viewfinder")
+            }
+            Button {
+                navVM.isShowingPhotoPicker = true
+            } label: {
+                Label("Photo", systemImage: "photo.on.rectangle")
             }
         }
-        ToolbarItem(placement: .navigationBarTrailing) {
+        // Live-OCR + Crop buttons + digit picker grouped on trailing side
+        ToolbarItemGroup(placement: .navigationBarTrailing) {
+            if #available(iOS 17.0, *) {
+                Button {
+                    scanVM.startLiveScan()
+                    navVM.isShowingLiveScanner = true
+                } label: {
+                    Label("Live", systemImage: "eye")
+                }
+                // Crop / clear-crop toggle (visible only while live scanner shown)
+                if navVM.isShowingLiveScanner {
+                    Button {
+                        liveCrop = nil        // clear existing crop
+                    } label: {
+                        Image(systemName: liveCrop == nil
+                                      ? "scissors"
+                                      : "scissors.badge.minus")
+                    }
+                    .accessibilityLabel("Clear crop")
+                }
+            }
+            // — existing digits menu —
             Menu {
-                Picker("Number System", selection: $scanVM.storedSystem) {
-                    Text("Western 0-9").tag(NumberSystem.western)
-                    Text("Eastern ٠-٩").tag(NumberSystem.eastern)
+                Picker("Digits", selection: $scanVM.storedSystem) {
+                    Label("Western 0-9",  systemImage: "character")
+                        .tag(NumberSystem.western)
+                    Label("Eastern ٠-٩",  systemImage: "character")
+                        .tag(NumberSystem.eastern)
                 }
             } label: {
-                Label("Digits", systemImage: "textformat.123")
+                Label { Text("") } icon: {
+                    Image(systemName: "textformat.123").symbolVariant(.circle)
+                }
+                .labelStyle(.iconOnly)
+                .accessibilityLabel("Digit style")
+                .accessibilityHint("Choose Western or Eastern numbers")
             }
         }
     }
@@ -115,9 +140,16 @@ struct ContentView: View {
         .fullScreenCover(isPresented: $navVM.isShowingLiveScanner) {
             if #available(iOS 17.0, *) {
                 NavigationStack {
-                    LiveScannerView { nums in
+                    LiveScannerView(numberSystem: $scanVM.storedSystem,
+                                    cropRect: $liveCrop) { nums in
                         scanVM.handleLiveNumbers(nums)
                     }
+                    .overlay(
+                        LiveOverlayView(numbers: scanVM.liveNumbers)
+                            .overlay(
+                                LiveCropOverlay(crop: $liveCrop)  // drawing layer
+                            )
+                    )
                     .ignoresSafeArea()          // fill entire screen
                     .toolbar {
                         // “Done” button to exit live OCR
