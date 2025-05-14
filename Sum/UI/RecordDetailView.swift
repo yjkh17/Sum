@@ -1,4 +1,3 @@
-
 import SwiftUI
 
 /// Shows cropped image (if saved) + the numbers card.
@@ -8,7 +7,7 @@ struct RecordDetailView: View {
 
     var body: some View {
         ScrollView {
-            if let img {
+            if let img = image {
                 Image(uiImage: img)
                     .resizable()
                     .scaledToFit()

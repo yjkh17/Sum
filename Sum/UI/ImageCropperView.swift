@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ImageCropperView: View {
     let image: UIImage
-    var onCropFinished: @MainActor (UIImage, [NumberObservation]) -> Void
+    var onCropFinished: @MainActor (UIImage, [NumberObservation], [FixCandidate]) -> Void
     @Environment(\.dismiss) private var dismiss
 
     // MARK: - Selection state
@@ -119,10 +119,11 @@ struct ImageCropperView: View {
         guard let cropped = cgImage.cropping(to: crop) else { return }
 
         Task.detached {
-            let obs   = (try? await TextScannerService.recognizeNumberObservations(in: cropped)) ?? []
+            let (obs, fixes) =
+                (try? await TextScannerService.recognizeNumberObservations(in: cropped)) ?? ([], [])
             let cropImage = UIImage(cgImage: cropped)
             await MainActor.run {
-                onCropFinished(cropImage, obs)
+                onCropFinished(cropImage, obs, fixes)
                 dismiss()
             }
         }

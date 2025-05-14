@@ -25,7 +25,9 @@ struct LiveScannerView: UIViewControllerRepresentable {
 
     final class Coordinator: NSObject, DataScannerViewControllerDelegate {
         let parent: LiveScannerView
-        private let regex = try! Regex(#"\d+(\.\d+)?"#)
+        /// Last set of numbers sent to the view-model — used to avoid
+        /// spamming the delegate with identical updates every frame.
+        private var lastSet: Set<Double> = []
 
         init(parent: LiveScannerView) { self.parent = parent }
 
@@ -41,17 +43,35 @@ struct LiveScannerView: UIViewControllerRepresentable {
             extractNumbers(from: allItems)
         }
 
+        private static func currentRegex() -> Regex<Substring> {
+            switch TextScannerService.currentSystem {
+            case .western: return try! Regex(#"[0-9]+(\.[0-9]+)?"#)
+            case .eastern: return try! Regex(#"[٠-٩۰-۹]+(\.[٠-٩۰-۹]+)?"#)
+            }
+        }
+
         private func extractNumbers(from items: [RecognizedItem]) {
-            var nums: [Double] = []
-            for item in items {
-                guard case let .text(textItem) = item else { continue }
+            var current: Set<Double> = []
+
+            for case let .text(textItem) in items {
                 let str = textItem.transcript
-                for match in str.matches(of: regex) {
-                    if let value = Double(str[match.range]) {
-                        nums.append(value)
+                for m in str.matches(of: Self.currentRegex()) {
+                    let slice   = String(str[m.range])
+                    let cleaned = TextScannerService.currentSystem == .eastern
+                        ? TextScannerService.normalize(slice)
+                        : slice
+                    if let v = Double(cleaned) {
+                        current.insert(v)
                     }
                 }
             }
+
+            // Only emit if something actually changed
+            guard current != lastSet else { return }
+            lastSet = current
+
+            // Stable order for UI
+            let nums = Array(current).sorted()
             Task { @MainActor in
                 parent.onNumbersUpdate(nums)
             }

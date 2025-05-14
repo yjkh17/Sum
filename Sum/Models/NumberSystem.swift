@@ -1,6 +1,6 @@
-
 import SwiftUI
 import RegexBuilder
+import _StringProcessing        // RegexBuilder internals
 
 /// نوع الأرقام المعتمد فى الجلسة (يحفظ فى ‎@AppStorage‎)
 enum NumberSystem: String, CaseIterable, Identifiable, Codable {
@@ -15,16 +15,18 @@ enum NumberSystem: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// الـ regex المقابل
-    var regex: Regex<(Substring, Substring?)> {
+    /// ‎Regex‎ خالٍ من *المجموعات القابلة للاصطياد* حتى لا نحتاج
+    /// النوع المركّب `(Substring, Substring?)` ويمنع تعثّر `try!`.
+    var regex: Regex<Substring> {
         switch self {
         case .western:
-            // 12,000   7,500.25   1234
-            return try! Regex(#"(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?"#)
+            // أمثلة: 1,234   7500   12,000.50
+            return try! Regex(#"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"#)
         case .eastern:
-            // Eastern-Indic ٠-٩  / Arabic-Indic ۰-۹
-            let digit = #"[٠-٩۰-۹]"#
-            return try! Regex(#"(\#(digit){1,3}(?:,\#(digit){3})+|\#(digit)+)(\.\#(digit)+)?"#)
+            // Eastern-Indic ٠-٩ + Arabic-Indic ۰-۹
+            let d = #"[٠-٩۰-۹]"#
+            // أمثلة: ١٢٣   ١٢٬٣٤٥٫٦٧   ۱۲٬۸۰۰
+            return try! Regex("(?:(?:\(d){1,3}(?:,\\\(d){3})+|\(d)+)(?:\\.\\\(d)+)?)")
         }
     }
 }

@@ -1,17 +1,20 @@
-
-import Foundation
-#if canImport(CoreML)
+import Vision
 import CoreML
-#endif
 
 enum DigitClassifierService {
-    /// Placeholder threshold; real model integration coming later.
-    static let confidenceThreshold: Double = 0.80
+    private static let vnModel: VNCoreMLModel = {
+        let cfg = MLModelConfiguration()
+        let model = try! DigitClassifier(configuration: cfg).model
+        return try! VNCoreMLModel(for: model)
+    }()
 
-    /// Dummy implementation so the project builds.
-    /// Replace with Core ML model inference in the next iteration.
-    static func predictDigit(from cgImage: CGImage) throws -> (digit: Int, confidence: Double)? {
-        // TODO: load MLModel & run prediction
-        return nil
+    static func predictDigit(from cgImage: CGImage) throws -> (Int, Double)? {
+        let req = VNCoreMLRequest(model: vnModel)
+        req.imageCropAndScaleOption = .scaleFill      // يضبط المقاس
+
+        try VNImageRequestHandler(cgImage: cgImage).perform([req])
+        guard let obs = req.results?.first as? VNClassificationObservation else { return nil }
+
+        return (Int(obs.identifier) ?? -1, Double(obs.confidence))
     }
 }
