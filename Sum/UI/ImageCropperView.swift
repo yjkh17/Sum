@@ -50,8 +50,6 @@ struct ImageCropperView: View {
                                 guard let draft = draftRect else { return }
                                 // convert to 0‥1 image-space
                                 let size = geo.size
-                                let imgWidth  = CGFloat(image.size.width)
-                                let imgHeight = CGFloat(image.size.height)
                                 let viewWidth = size.width
                                 let viewHeight = max(image.size.height * size.width / image.size.width, size.height)
                                 let x = draft.minX / viewWidth
@@ -97,8 +95,6 @@ struct ImageCropperView: View {
         guard let r = rect ?? draftRect else { return .zero }
         if rect == nil { return r }                       // draft is in view-space
         // committed rect is normalised, convert to view-space
-        let imgWidth  = CGFloat(image.size.width)
-        let imgHeight = CGFloat(image.size.height)
         let viewWidth = size.width
         let viewHeight = max(image.size.height * size.width / image.size.width, size.height)
         return CGRect(x: r.minX * viewWidth,
