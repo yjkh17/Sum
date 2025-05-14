@@ -7,27 +7,26 @@ struct ContentView: View {
     @StateObject private var scanVM = ScannerViewModel()
     @StateObject private var navVM  = NavigationViewModel()
     @State private var liveCrop: CGRect? = nil        // live-OCR crop rectangle
+    @State private var liveHighlights: [CGRect] = []  // rects from Live OCR
+    @State private var liveConfs: [Float] = []        // confidences
+    @State private var isCropMode = false             // crop-drawing toggle
     /// iPhone = .compact  /  iPad = .regular
     @Environment(\.horizontalSizeClass) private var hSize
 
-    // MARK: - Re-usable toolbar
+    // MARK: - Re-usable state & helpers (kept)
+    // MARK: - Unified toolbar for iPhone & iPad
     @ToolbarContentBuilder
-    private var toolBarContent: some ToolbarContent {
-        // Consolidated leading buttons with SF-Symbol icons
+    private var rootToolbar: some ToolbarContent {
+        // leading buttons
         ToolbarItemGroup(placement: .navigationBarLeading) {
-            Spacer().frame(width: 8)          // فراغ أوضح مع حافة الشاشة
-            Button {
-                navVM.isShowingScanner = true
-            } label: {
+            Button { navVM.isShowingScanner = true } label: {
                 Label("Scan", systemImage: "camera.viewfinder")
             }
-            Button {
-                navVM.isShowingPhotoPicker = true
-            } label: {
+            Button { navVM.isShowingPhotoPicker = true } label: {
                 Label("Photo", systemImage: "photo.on.rectangle")
             }
         }
-        // Live-OCR + Crop buttons + digit picker grouped on trailing side
+        // trailing buttons / menu
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             if #available(iOS 17.0, *) {
                 Button {
@@ -36,34 +35,16 @@ struct ContentView: View {
                 } label: {
                     Label("Live", systemImage: "eye")
                 }
-                // Crop / clear-crop toggle (visible only while live scanner shown)
-                if navVM.isShowingLiveScanner {
-                    Button {
-                        liveCrop = nil        // clear existing crop
-                    } label: {
-                        Image(systemName: liveCrop == nil
-                                      ? "scissors"
-                                      : "scissors.badge.minus")
-                    }
-                    .accessibilityLabel("Clear crop")
-                }
             }
-            // — existing digits menu —
             Menu {
                 Picker("Digits", selection: $scanVM.storedSystem) {
-                    Label("Western 0-9",  systemImage: "character")
-                        .tag(NumberSystem.western)
-                    Label("Eastern ٠-٩",  systemImage: "character")
-                        .tag(NumberSystem.eastern)
+                    Text("Western 0-9").tag(NumberSystem.western)
+                    Text("Eastern ٠-٩").tag(NumberSystem.eastern)
                 }
             } label: {
-                Label { Text("") } icon: {
-                    Image(systemName: "textformat.123").symbolVariant(.circle)
-                }
-                .labelStyle(.iconOnly)
-                .accessibilityLabel("Digit style")
-                .accessibilityHint("Choose Western or Eastern numbers")
+                Image(systemName: "textformat.123").symbolVariant(.circle)
             }
+            EditButton()
         }
     }
 
@@ -84,9 +65,8 @@ struct ContentView: View {
                 }
             }
             .onDelete(perform: deleteRecords)
-        }
-        }
-        // Duplicate toolbar removed; root view already adds it.
+        }                                     // ← END List
+    }
 
     private var detailPane: some View {
         Group {
@@ -100,16 +80,20 @@ struct ContentView: View {
     }
 
     var body: some View {
-        Group {
-            if hSize == .compact {          // iPhone
-                NavigationStack {
+        NavigationStack {
+            Group {
+                if hSize == .compact {              // iPhone
                     masterList
-                }
-            } else {                        // iPad / wide
-                NavigationSplitView {
-                    masterList
-                } detail: {
-                    detailPane
+                        .navigationTitle("History")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar { rootToolbar }
+                } else {                            // iPad / wide
+                    NavigationSplitView {
+                        masterList
+                    } detail: {
+                        detailPane
+                    }
+                    .toolbar { rootToolbar }
                 }
             }
         }
@@ -127,35 +111,54 @@ struct ContentView: View {
                 }
                 .navigationTitle("Choose a Photo")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar(content: {              // explicit builder removes ambiguity
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") {
-                            navVM.isShowingPhotoPicker = false
-                        }
-                    }
-                })
             }
         }
         .fullScreenCover(isPresented: $navVM.isShowingLiveScanner) {
             if #available(iOS 17.0, *) {
                 NavigationStack {
-                    LiveScannerView(numberSystem: $scanVM.storedSystem,
-                                    cropRect: $liveCrop) { nums in
-                        scanVM.handleLiveNumbers(nums)
-                    }
-                    .overlay(
-                        LiveOverlayView(numbers: scanVM.liveNumbers)
-                            .overlay(
-                                LiveCropOverlay(crop: $liveCrop)  // drawing layer
-                            )
+                    LiveScannerView(
+                        numberSystem:  $scanVM.storedSystem,
+                        onNumbersUpdate: { nums in
+                            scanVM.handleLiveNumbers(nums)
+                        },
+                        highlights:      $liveHighlights,
+                        highlightConfs:  $liveConfs,
+                        cropRect:        $liveCrop
                     )
-                    .ignoresSafeArea()          // fill entire screen
+                    .overlay(                              // 1) live total label (no hit‑test)
+                        LiveOverlayView(numbers: scanVM.liveNumbers)
+                            .allowsHitTesting(false)       // let gestures pass through
+                    )
+                    // highlight rectangles (always)
+                    .overlay(
+                        LiveHighlightOverlay(rects: liveHighlights,
+                                             rectConfs: liveConfs)
+                    )
+                    // crop-drawing layer (only in crop mode ‑ sits on top)
+                    .overlay {
+                        if isCropMode {
+                            LiveCropOverlay(crop: $liveCrop)
+                        }
+                    }
+                    .ignoresSafeArea()                     // fill whole screen
                     .toolbar {
-                        // “Done” button to exit live OCR
+                        // “Done” button to exit live OCR (also clears any crop)
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Done") {
                                 navVM.isShowingLiveScanner = false
+                                liveCrop = nil             // clear crop on exit
                             }
+                        }
+                        // Crop / clear-crop toggle (only in Live-OCR screen)
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button {
+                                liveCrop = nil             // clear current crop
+                            } label: {
+                                Image(systemName: liveCrop == nil
+                                                  ? "scissors"
+                                                  : "scissors.badge.minus")
+                            }
+                            .accessibilityLabel("Clear crop")
                         }
                     }
                 }
