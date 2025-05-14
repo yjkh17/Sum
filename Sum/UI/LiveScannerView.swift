@@ -73,21 +73,23 @@ struct LiveScannerView: UIViewControllerRepresentable {
                                     in scanner: DataScannerViewController) {
             var current: Set<Double> = []
 
-            for case let .text(textItem) in items {
+            for item in items {
+                guard case let .text(textItem) = item else { continue }
                 let str = textItem.transcript
-                // If a crop is active, skip items outside it  (boundingBox is a *method*)
-                                if let crop = cropRect {
-                                   // frame ⇢ view-space rect; convert إلى 0‥1
-                                    let box = textItem.frame
-                                    guard let v = scanner.view else { continue }
-                                    let sz   = v.bounds.size
-                                    let norm = CGRect(x: box.minX / sz.width,
-                                                      y: box.minY / sz.height,
-                                                      width : box.width  / sz.width,
-                                                      height: box.height / sz.height)
-                                    guard crop.intersects(norm) else { continue }
-                                }
-                guard str.count < 40 else { continue }     // قصّ السطور الطويلة
+
+                // ✦ قصّ العناصر خارج الاقتصاص (إن وُجد)
+                if let crop = cropRect {
+                    // RecognizedText exposes `boundingBox` (0‥1 in view coords)
+                    guard
+                        let box = textItem.boundingBox,  // optional CGRect
+                        crop.intersects(box)
+                    else { continue }
+                }
+
+                // ✦ تجاهل السطور الطويلة
+                guard str.count < 40 else { continue }
+
+                // ✦ مطابقة الأرقام
                 for m in str.matches(of: regex) {
                     let slice   = String(str[m.range])
                     let cleaned = system == .western

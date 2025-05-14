@@ -85,7 +85,7 @@ struct ContentView: View {
             }
             .onDelete(perform: deleteRecords)
         }
-        .toolbar { toolBarContent }
+        .toolbar { toolBarContent }          // إبقاء مُعدّل واحد واضح
     }
 
     private var detailPane: some View {
@@ -127,14 +127,13 @@ struct ContentView: View {
                 }
                 .navigationTitle("Choose a Photo")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    // In case the user wants to cancel without picking
+                .toolbar(content: {              // explicit builder removes ambiguity
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel") {
                             navVM.isShowingPhotoPicker = false
                         }
                     }
-                }
+                })
             }
         }
         .fullScreenCover(isPresented: $navVM.isShowingLiveScanner) {
