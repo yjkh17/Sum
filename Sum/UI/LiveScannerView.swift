@@ -1,4 +1,3 @@
-
 import SwiftUI
 import VisionKit
 
@@ -18,7 +17,6 @@ struct LiveScannerView: UIViewControllerRepresentable {
             isHighlightingEnabled: true
         )
         scanner.delegate = context.coordinator
-        scanner.recognizesMultipleItems = true
         try? scanner.startScanning()
         return scanner
     }

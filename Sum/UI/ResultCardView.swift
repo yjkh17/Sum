@@ -1,4 +1,3 @@
-
 import SwiftUI
 
 struct ResultCardView: View {
@@ -33,7 +32,10 @@ struct ResultCardView: View {
                     .foregroundStyle(.secondary)
 
                 // Wrap numbers in a simple flow-layout
-                FlexibleView(data: numbers, spacing: 8, alignment: .leading) { value in
+                let indexed = numbers.enumerated().map { IndexedNumber(index: $0.offset, value: $0.element) }
+                FlexibleView(data: indexed,
+                             spacing: 8, alignment: .leading) { item in
+                    let value = item.value
                     Text(formatter.string(from: value as NSNumber) ?? "")
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -53,6 +55,12 @@ struct ResultCardView: View {
         )
         .padding()
     }
+}
+
+// MARK: - Helper type to satisfy Hashable
+private struct IndexedNumber: Hashable {
+    let index: Int
+    let value: Double
 }
 
 /// A simple flow-layout helper (very small)

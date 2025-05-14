@@ -1,6 +1,5 @@
-
-
 import SwiftUI
+import AVFoundation
 
 struct CroppedResultView: View {
     let image: UIImage
@@ -13,30 +12,32 @@ struct CroppedResultView: View {
     var body: some View {
         VStack {
             GeometryReader { geo in
-                let scale = min(geo.size.width / image.size.width,
-                                geo.size.height / image.size.height)
-                let imgW  = image.size.width * scale
-                let imgH  = image.size.height * scale
-                let offsetX = (geo.size.width  - imgW) / 2
-                let offsetY = (geo.size.height - imgH) / 2
+                // Let AVMakeRect calculate the fitted frame
+                let fitted = AVMakeRect(aspectRatio: image.size,
+                                        insideRect: geo.frame(in: .local))
 
                 ZStack(alignment: .topLeading) {
+                    // The photo
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
+                        .frame(width: fitted.width, height: fitted.height)
+                        .position(x: fitted.midX, y: fitted.midY)
 
+                    // Highlight rectangles
                     ForEach(observations) { obs in
+                        let scale = fitted.width / image.size.width
                         Rectangle()
                             .stroke(Color.yellow, lineWidth: 2)
                             .frame(width: obs.rect.width  * scale,
                                    height: obs.rect.height * scale)
-                            .offset(x: obs.rect.minX * scale + offsetX,
-                                    y: obs.rect.minY * scale + offsetY)
+                            .position(
+                                x: fitted.minX + (obs.rect.midX * scale),
+                                y: fitted.minY + (obs.rect.midY * scale)
+                            )
                     }
                 }
             }
-            .padding()
-            .background(Color.black.opacity(0.85))
             .ignoresSafeArea(edges: .top)
 
             Text("Total: \(sum, format: .number)")
@@ -49,4 +50,3 @@ struct CroppedResultView: View {
         .background(Color.black)
     }
 }
-

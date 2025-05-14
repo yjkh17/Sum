@@ -1,4 +1,3 @@
-
 import SwiftUI
 import VisionKit
 
@@ -23,18 +22,28 @@ struct DocumentScannerView: UIViewControllerRepresentable {
 
         func documentCameraViewController(_ controller: VNDocumentCameraViewController,
                                           didFinishWith scan: VNDocumentCameraScan) {
-            Task.detached {
-                var allNumbers: [Double] = []
-                for index in 0..<scan.pageCount {
-                    let uiImage = scan.imageOfPage(at: index)
-                    guard let cgImage = uiImage.cgImage else { continue }
-                    if let nums = try? await TextScannerService.recognizeNumbers(in: cgImage) {
-                        allNumbers.append(contentsOf: nums)
+            Task.detached { [scan, parent = self.parent] in
+                // نجمع أرقام كل صفحة بمهمة فرعية مستقلة ثم نلصقها لاحقًا
+                let allNumbers: [Double] = try await withThrowingTaskGroup(of: [Double].self) { group in
+                    for index in 0..<scan.pageCount {
+                        let uiImage = scan.imageOfPage(at: index)
+                        guard let cgImage = uiImage.cgImage else { continue }
+                        
+                        group.addTask {
+                            (try? await TextScannerService.recognizeNumbers(in: cgImage)) ?? []
+                        }
                     }
+                    
+                    var merged: [Double] = []
+                    for try await nums in group {
+                        merged.append(contentsOf: nums)
+                    }
+                    return merged
                 }
+                
                 await MainActor.run {
-                    self.parent.onScanCompleted(allNumbers)
-                    self.parent.dismiss()
+                    parent.onScanCompleted(allNumbers)
+                    parent.dismiss()
                 }
             }
         }
