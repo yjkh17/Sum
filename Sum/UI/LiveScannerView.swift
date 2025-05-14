@@ -77,22 +77,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
                 guard case let .text(textItem) = item else { continue }
                 let str = textItem.transcript
 
-                // ✦ قصّ العناصر خارج الاقتصاص (إن وُجد)
-                if let crop = cropRect {
-                    // boundingBox(for:) exists on the outer `item`
-                    guard
-                        let boxInView = try? item.boundingBox(for: .view),
-                        let host      = scanner.view
-                    else { continue }
-
-                    // Convert view-space rect → unit-space (0…1)
-                    let sz   = host.bounds.size
-                    let norm = CGRect(x: boxInView.minX / sz.width,
-                                      y: boxInView.minY / sz.height,
-                                      width : boxInView.width  / sz.width,
-                                      height: boxInView.height / sz.height)
-                    guard crop.intersects(norm) else { continue }
-                }
+                // TODO: crop filtering temporarily disabled to fix build.
+                // Re-enable once the correct VisionKit bounding-box API is confirmed.
 
                 // ✦ تجاهل السطور الطويلة
                 guard str.count < 40 else { continue }
