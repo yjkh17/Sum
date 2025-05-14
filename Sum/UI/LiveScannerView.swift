@@ -79,11 +79,19 @@ struct LiveScannerView: UIViewControllerRepresentable {
 
                 // ✦ قصّ العناصر خارج الاقتصاص (إن وُجد)
                 if let crop = cropRect {
-                    // RecognizedText exposes `boundingBox` (0‥1 in view coords)
+                    // boundingBox(for:) exists on the outer `item`
                     guard
-                        let box = textItem.boundingBox,  // optional CGRect
-                        crop.intersects(box)
+                        let boxInView = try? item.boundingBox(for: .view),
+                        let host      = scanner.view
                     else { continue }
+
+                    // Convert view-space rect → unit-space (0…1)
+                    let sz   = host.bounds.size
+                    let norm = CGRect(x: boxInView.minX / sz.width,
+                                      y: boxInView.minY / sz.height,
+                                      width : boxInView.width  / sz.width,
+                                      height: boxInView.height / sz.height)
+                    guard crop.intersects(norm) else { continue }
                 }
 
                 // ✦ تجاهل السطور الطويلة

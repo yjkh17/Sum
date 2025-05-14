@@ -85,7 +85,8 @@ struct ContentView: View {
             }
             .onDelete(perform: deleteRecords)
         }
-        .toolbar { toolBarContent }          // إبقاء مُعدّل واحد واضح
+        // Remove duplicate toolbar here — the root NavigationStack already adds it
+        // .toolbar { toolBarContent }
     }
 
     private var detailPane: some View {
