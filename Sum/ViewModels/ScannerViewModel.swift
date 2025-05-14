@@ -50,6 +50,7 @@ final class ScannerViewModel: ObservableObject {
         capturedNumbers.removeAll()
         photoNumbers.removeAll()
         liveNumbers = nums
+        if !pendingFixes.isEmpty { isShowingFixSheet = true }
         recalcTotals(live: true)
     }
 
@@ -70,6 +71,7 @@ final class ScannerViewModel: ObservableObject {
         if fixes.isEmpty {
             recalcTotals()
         } else {
+            pendingFixes.append(contentsOf: fixes)
             isShowingFixSheet = true
         }
     }

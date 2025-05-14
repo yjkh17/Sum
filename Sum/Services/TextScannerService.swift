@@ -6,6 +6,7 @@ struct NumberObservation: Identifiable, Hashable {
     let id = UUID()
     let value: Double
     let rect: CGRect     // in pixel coordinates
+    let confidence: Float
 }
 
 // MARK: - FixCandidate (رقم منخفض الثقة يحتاج تصحيح)
@@ -14,6 +15,7 @@ struct FixCandidate: Identifiable {
     let image: CGImage      // صورة القصاصة
     let rect : CGRect       // مكانها فى الصورة الأصليّة
     var suggested: Int?     // ما اقترحه Vision / CoreML
+    let confidence: Float
 }
 
 // يُحدَّث من الـ ViewModel
@@ -110,27 +112,32 @@ enum TextScannerService {
                     height: box.height * imgH
                 )
 
-                // --------- Fallback إلى نموذج Core ML عند ثقة Vision منخفضة ---------
+                // --------- Fallback → Core-ML لتحسين الثقة ---------
+                var conf = obs.confidence
                 if obs.confidence < 0.60,                          // Vision متردد
                    currentSystem == .western,                      // يدعم الغربية حالياً
                    let crop = cgImage.cropping(to: rect.integral),
                    let (digit, mlConf) =
                         try? DigitClassifierService.predictDigit(from: crop),
                    mlConf > 0.80 {                                 // الموديل واثق
-                    result.append(.init(value: Double(digit), rect: rect))
+                    conf  = max(conf, Float(mlConf))
+                    result.append(.init(value: Double(digit),
+                                       rect: rect,
+                                       confidence: conf))
                     continue                                       // تخطِّ Vision
                 }
                 // --------------------------------------------------------------------
 
                 // VN observation’s boundingBox is in unit space, flip Y (already done above)
-                result.append(.init(value: val, rect: rect))
+                result.append(.init(value: val, rect: rect, confidence: conf))
 
                 // ✦ مرشَّح للتصحيح إذا الثقة < 0.30
                 if obs.confidence < 0.30,
                    let sub = cgImage.cropping(to: rect.integral) {
                     fixes.append(.init(image: sub,
                                        rect: rect,
-                                       suggested: Int(val)))
+                                       suggested: Int(val),
+                                       confidence: conf))
                 }
             }
         }

@@ -1,5 +1,3 @@
-
-
 import SwiftUI
 
 struct FixDigitSheet: View {
@@ -11,27 +9,48 @@ struct FixDigitSheet: View {
     var body: some View {
         VStack(spacing: 24) {
             if let first = fixes.first {
-                Image(decorative: first.image, scale: 1)
-                    .resizable()
-                    .interpolation(.none)
-                    .frame(width: 64, height: 64)
-                    .border(Color.yellow)
+                VStack(spacing: 16) {
+                    Image(uiImage: UIImage(cgImage: first.image))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 120)
 
-                TextField("Digit", text: $input)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.center)
-                    .frame(width: 80)
-                    .textFieldStyle(.roundedBorder)
+                    Text("Confidence \(Int(first.confidence * 100)) %")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
 
-                Button("Save") {
-                    if let n = Int(input) {
-                        SampleStore.shared.save(image: first.image, label: n)
-                        fixes.removeFirst()
-                        input = ""
-                        if fixes.isEmpty { onFinish() }
+                    Text("(\(fixes.count) left)")
+                        .font(.caption2)
+
+                    HStack {
+                        TextField("Correct digit", text: $input)
+                            .keyboardType(.numberPad)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button("Save") {
+                            guard let val = Int(input),
+                                  let firstFix = fixes.first
+                            else { return }
+
+                            SampleStore.shared.save(image: firstFix.image,
+                                                    label: val)
+
+                            // haptic feedback
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+                            fixes.removeFirst()
+                            input = ""
+                            if fixes.isEmpty {
+                                onFinish()
+                            }
+                        }
+                        Button("Skip") {
+                            fixes.removeFirst()
+                            if fixes.isEmpty { onFinish() }
+                        }
                     }
                 }
-                .disabled(Int(input) == nil)
+                .padding()
             } else {
                 ProgressView()
             }
@@ -39,4 +58,3 @@ struct FixDigitSheet: View {
         .padding()
     }
 }
-

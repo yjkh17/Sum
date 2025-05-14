@@ -8,7 +8,7 @@ struct LiveScannerView: UIViewControllerRepresentable {
     /// Continuously streams the set of numbers currently visible.
     var onNumbersUpdate: @MainActor ([Double]) -> Void
     /// Unit-space rects (0…1) – drives highlight overlay
-    @Binding var highlights: [CGRect]
+    @Binding var highlights:     [CGRect]
     /// Parallel array of confidences (0…1) for each rect
     @Binding var highlightConfs: [Float]
     /// Optional crop rectangle (unit-space 0…1) – when nil → full frame
@@ -16,8 +16,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self,
-                    highlights: $highlights,
-                    confs:      $highlightConfs)
+                    highlights:     $highlights,
+                    highlightConfs: $highlightConfs)
     }
 
     func makeUIViewController(context: Context) -> DataScannerViewController {
@@ -51,13 +51,13 @@ struct LiveScannerView: UIViewControllerRepresentable {
         private let highlightConfs: Binding<[Float]>
 
         init(parent: LiveScannerView,
-             highlights: Binding<[CGRect]>,
-             confs:      Binding<[Float]>) {
+             highlights:     Binding<[CGRect]>,
+             highlightConfs: Binding<[Float]>) {
             self.parent  = parent
             self.system  = parent.numberSystem
             self.regex   = Self.regex(for: system)
             self.highlights = highlights
-            self.highlightConfs = confs
+            self.highlightConfs = highlightConfs
         }
 
         func dataScanner(_ scanner: DataScannerViewController,
@@ -128,10 +128,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
                     if let v = Double(cleaned) {
                         current.insert(v)
                         rects.append(norm)
-                        // DataScanner provides no explicit confidence;
-                        // use a simple heuristic: longer match → higher confidence
-                        let finalConf: Float = str.count <= 2 ? 0.8 :
-                                                   (str.count <= 5 ? 0.6 : 0.4)
+                        let finalConf: Float = str.count <= 2 ? 0.8
+                                          : (str.count <= 5 ? 0.6 : 0.4)
                         confs.append(finalConf)
                     }
                 }
@@ -145,8 +143,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
             let nums = Array(current).sorted()
             Task { @MainActor in
                 parent.onNumbersUpdate(nums)
-                highlights.wrappedValue      = rects
-                highlightConfs.wrappedValue  = confs
+                highlights.wrappedValue     = rects
+                highlightConfs.wrappedValue = confs
             }
         }
     }

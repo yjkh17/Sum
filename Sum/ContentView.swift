@@ -129,12 +129,10 @@ struct ContentView: View {
                         LiveOverlayView(numbers: scanVM.liveNumbers)
                             .allowsHitTesting(false)       // let gestures pass through
                     )
-                    // highlight rectangles (always)
                     .overlay(
                         LiveHighlightOverlay(rects: liveHighlights,
                                              rectConfs: liveConfs)
                     )
-                    // crop-drawing layer (only in crop mode ‑ sits on top)
                     .overlay {
                         if isCropMode {
                             LiveCropOverlay(crop: $liveCrop)
