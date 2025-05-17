@@ -35,6 +35,9 @@ struct ContentView: View {
     @State private var liveScannerCoord: LiveScannerView.Coordinator? = nil
 
     @Environment(\.horizontalSizeClass) private var hSize
+    
+    // Add loading state
+    @State private var isReady = false
 
     // MARK: - List & detail helpers
     private var masterList: some View {
@@ -79,12 +82,39 @@ struct ContentView: View {
     // MARK: - Body
     var body: some View {
         Group {
-            if hSize == .compact {
-                NavigationStack {
-                    masterList
-                        .navigationTitle("History")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
+            if !isReady {
+                ProgressView()
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            isReady = true
+                        }
+                    }
+            } else {
+                // Main content
+                Group {
+                    if hSize == .compact {
+                        NavigationStack {
+                            masterList
+                                .navigationTitle("History")
+                                .navigationBarTitleDisplayMode(.inline)
+                                .toolbar {
+                                    RootToolbar(
+                                        showScanner: $navVM.isShowingScanner,
+                                        showPhotoPicker: $navVM.isShowingPhotoPicker,
+                                        showLiveScanner: $navVM.isShowingLiveScanner,
+                                        numberSystem: $scanVM.storedSystem,
+                                        onStartLiveScan: scanVM.startLiveScan
+                                    )
+                                }
+                        }
+                    } else {
+                        NavigationSplitView {
+                            masterList
+                                .navigationTitle("History")
+                        } detail: {
+                            detailPane
+                        }
+                        .toolbar(content: {
                             RootToolbar(
                                 showScanner: $navVM.isShowingScanner,
                                 showPhotoPicker: $navVM.isShowingPhotoPicker,
@@ -92,143 +122,134 @@ struct ContentView: View {
                                 numberSystem: $scanVM.storedSystem,
                                 onStartLiveScan: scanVM.startLiveScan
                             )
-                        }
-                }
-            } else {
-                NavigationSplitView {
-                    masterList
-                        .navigationTitle("History")
-                } detail: {
-                    detailPane
-                }
-                .toolbar {
-                    RootToolbar(
-                        showScanner: $navVM.isShowingScanner,
-                        showPhotoPicker: $navVM.isShowingPhotoPicker,
-                        showLiveScanner: $navVM.isShowingLiveScanner,
-                        numberSystem: $scanVM.storedSystem,
-                        onStartLiveScan: scanVM.startLiveScan
-                    )
-                }
-            }
-        }
-        // MARK: - Document scanner
-        .sheet(isPresented: $navVM.isShowingScanner) {
-            DocumentScannerView { nums in
-                scanVM.handleScanCompleted(nums)
-            }
-        }
-        // MARK: - Photo picker
-        .fullScreenCover(isPresented: $navVM.isShowingPhotoPicker) {
-            NavigationStack {
-                PhotoPickerView { img in
-                    scanVM.handlePickedImage(img)
-                    navVM.isShowingPhotoPicker = false
-                    navVM.isShowingCropper     = true
-                }
-                .navigationTitle("Choose a Photo")
-                .navigationBarTitleDisplayMode(.inline)
-            }
-        }
-        // MARK: - Live OCR
-        .fullScreenCover(isPresented: $navVM.isShowingLiveScanner) {
-            if #available(iOS 17.0, *) {
-                NavigationStack {
-                    LiveScannerView(
-                        numberSystem:    $scanVM.storedSystem,
-                        onNumbersUpdate: { nums in
-                            scanVM.liveNumbers = nums
-                        },
-                        highlights:      $liveHighlights,
-                        highlightConfs:  $liveConfs,
-                        cropRect:        $liveCrop,
-                        onFixTap: { fix in
-                            scanVM.currentFix = fix
-                        },
-                        onCoordinatorReady: { c in
-                            liveScannerCoord = c
-                        }
-                    )
-                    .overlay(
-                        LiveOverlayView(numbers: scanVM.liveNumbers)
-                            .allowsHitTesting(false)
-                    )
-                    .overlay(
-                        LiveHighlightOverlay(rects: liveHighlights,
-                                             rectConfs: liveConfs,
-                                             onTap: { idx in
-                                                 liveScannerCoord?.requestFix(at: idx)
-                                             })
-                    )
-                    .overlay {
-                        if let _ = liveCrop { LiveCropOverlay(crop: $liveCrop) }
-                        LiveFixPopover(candidate: $scanVM.currentFix)
-                            .environmentObject(scanVM)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity,
-                                   alignment: .center)
+                        })
                     }
-                    .ignoresSafeArea()
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") {
-                                navVM.isShowingLiveScanner = false
-                                liveCrop = nil
+                }
+                // MARK: - Document scanner
+                .sheet(isPresented: $navVM.isShowingScanner) {
+                    DocumentScannerView { nums in
+                        scanVM.handleScanCompleted(nums)
+                    }
+                }
+                // MARK: - Photo picker
+                .fullScreenCover(isPresented: $navVM.isShowingPhotoPicker) {
+                    NavigationStack {
+                        PhotoPickerView { img in
+                            scanVM.handlePickedImage(img)
+                            navVM.isShowingPhotoPicker = false
+                            navVM.isShowingCropper     = true
+                        }
+                        .navigationTitle("Choose a Photo")
+                        .navigationBarTitleDisplayMode(.inline)
+                    }
+                }
+                // MARK: - Live OCR
+                .fullScreenCover(isPresented: $navVM.isShowingLiveScanner) {
+                    if #available(iOS 17.0, *) {
+                        NavigationStack {
+                            LiveScannerView(
+                                numberSystem:    $scanVM.storedSystem,
+                                onNumbersUpdate: { nums in
+                                    scanVM.liveNumbers = nums
+                                },
+                                highlights:      $liveHighlights,
+                                highlightConfs:  $liveConfs,
+                                cropRect:        $liveCrop,
+                                onFixTap: { fix in
+                                    scanVM.currentFix = fix
+                                },
+                                onCoordinatorReady: { c in
+                                    liveScannerCoord = c
+                                }
+                            )
+                            .overlay(
+                                LiveOverlayView(numbers: scanVM.liveNumbers)
+                                    .allowsHitTesting(false)
+                            )
+                            .overlay(
+                                LiveHighlightOverlay(rects: liveHighlights,
+                                                     rectConfs: liveConfs,
+                                                     onTap: { idx in
+                                                         liveScannerCoord?.requestFix(at: idx)
+                                                     })
+                            )
+                            .overlay {
+                                if let _ = liveCrop { LiveCropOverlay(crop: $liveCrop) }
+                                LiveFixPopover(candidate: $scanVM.currentFix)
+                                    .environmentObject(scanVM)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                                           alignment: .center)
+                            }
+                            .ignoresSafeArea()
+                            .toolbar {
+                                ToolbarItem(placement: .cancellationAction) {
+                                    Button("Done") {
+                                        navVM.isShowingLiveScanner = false
+                                        liveCrop = nil
+                                    }
+                                }
+                                ToolbarItem(placement: .navigationBarTrailing) {
+                                    Button {
+                                        liveCrop = nil
+                                    } label: {
+                                        Image(systemName: liveCrop == nil
+                                              ? "scissors"
+                                              : "scissors.badge.minus")
+                                    }
+                                    .accessibilityLabel("Clear crop")
+                                }
                             }
                         }
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button {
-                                liveCrop = nil
-                            } label: {
-                                Image(systemName: liveCrop == nil
-                                      ? "scissors"
-                                      : "scissors.badge.minus")
+                    } else {
+                        Text("Live OCR requires iOS 17 or later.")
+                    }
+                }
+                // MARK: - Cropper
+                .fullScreenCover(isPresented: $navVM.isShowingCropper) {
+                    if let uiImage = scanVM.pickedImage {
+                        NavigationStack {
+                            ImageCropperView(image: uiImage) { cropImage, obs, fixes in
+                                scanVM.handleCroppedNumbers(obs.map(\.value), fixes: fixes)
+                                scanVM.receiveCroppedResult(image: cropImage, observations: obs)
+                                navVM.isShowingCropper = false
+                                navVM.isShowingResult  = true
                             }
-                            .accessibilityLabel("Clear crop")
+                            .navigationBarTitleDisplayMode(.inline)
                         }
                     }
                 }
-            } else {
-                Text("Live OCR requires iOS 17 or later.")
-            }
-        }
-        // MARK: - Cropper
-        .fullScreenCover(isPresented: $navVM.isShowingCropper) {
-            if let uiImage = scanVM.pickedImage {
-                NavigationStack {
-                    ImageCropperView(image: uiImage) { cropImage, obs, fixes in
-                        scanVM.handleCroppedNumbers(obs.map(\.value), fixes: fixes)
-                        scanVM.receiveCroppedResult(image: cropImage, observations: obs)
-                        navVM.isShowingCropper = false
-                        navVM.isShowingResult  = true
+                // MARK: - Cropped result
+                .fullScreenCover(isPresented: $navVM.isShowingResult) {
+                    if let img = scanVM.croppedImage,
+                       let obs = scanVM.croppedObservations {
+                        CroppedResultView(image: img, observations: obs)
+                            .onTapGesture { navVM.isShowingResult = false }
                     }
-                    .navigationBarTitleDisplayMode(.inline)
+                }
+                // MARK: - Fix-digit sheet (static scans only)
+                .sheet(
+                    isPresented: Binding(
+                        get: { scanVM.isShowingFixSheet && !navVM.isShowingLiveScanner },
+                        set: { scanVM.isShowingFixSheet = $0 }
+                    )
+                ) {
+                    FixDigitSheet(fixes: $scanVM.pendingFixes) {
+                        scanVM.finishFixes()
+                    }
+                }
+                // MARK: - Sum alert
+                .alert("Total", isPresented: $scanVM.showSumAlert) {
+                    Button("OK", role: .cancel) { }
+                } message: {
+                    Text(scanVM.lastSum, format: .number)
                 }
             }
         }
-        // MARK: - Cropped result
-        .fullScreenCover(isPresented: $navVM.isShowingResult) {
-            if let img = scanVM.croppedImage,
-               let obs = scanVM.croppedObservations {
-                CroppedResultView(image: img, observations: obs)
-                    .onTapGesture { navVM.isShowingResult = false }
-            }
-        }
-        // MARK: - Fix-digit sheet (static scans only)
-        .sheet(
-            isPresented: Binding(
-                get: { scanVM.isShowingFixSheet && !navVM.isShowingLiveScanner },
-                set: { scanVM.isShowingFixSheet = $0 }
+        .overlay {
+            ProcessingOverlay(
+                progress: scanVM.processingState.progress,
+                isVisible: scanVM.processingState.isProcessing
             )
-        ) {
-            FixDigitSheet(fixes: $scanVM.pendingFixes) {
-                scanVM.finishFixes()
-            }
-        }
-        // MARK: - Sum alert
-        .alert("Total", isPresented: $scanVM.showSumAlert) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text(scanVM.lastSum, format: .number)
         }
     }
 
