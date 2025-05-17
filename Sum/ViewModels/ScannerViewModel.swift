@@ -6,10 +6,11 @@ final class ScannerViewModel: ObservableObject {
     // Store numbers from each source separately
     @Published private(set) var capturedNumbers: [Double] = []    // Document scanner
     @Published private(set) var photoNumbers:    [Double] = []    // Photo picker
-    @Published private(set) var liveNumbers:     [Double] = []    // Live OCR
+    @Published var liveNumbers: [Double] = []
     // Unified published view
     @Published private(set) var numbers: [Double] = []
     @Published private(set) var sum:     Double  = 0
+    @Published private(set) var liveSum: Double = 0
     // UI state now lives in NavigationViewModel
     @Published var pickedImage: UIImage?
 
@@ -21,6 +22,7 @@ final class ScannerViewModel: ObservableObject {
     // MARK: - Interactive-fix
     @Published var pendingFixes: [FixCandidate] = []
     @Published var isShowingFixSheet = false
+    @Published var currentFix: FixCandidate? = nil
 
     // MARK: - Alert support
     @Published var showSumAlert = false
@@ -38,22 +40,6 @@ final class ScannerViewModel: ObservableObject {
         recalcTotals()
     }
 
-    // MARK: - Live OCR
-    func startLiveScan() {
-        resetNumbers()       // navVM toggles sheet
-        // CLEAR previous numbers when a new live session starts
-    }
-
-    /// Receiving live-update numbers from LiveScannerView
-    func handleLiveNumbers(_ nums: [Double]) {
-        // Keep only the live feed’s numbers
-        capturedNumbers.removeAll()
-        photoNumbers.removeAll()
-        liveNumbers = nums
-        if !pendingFixes.isEmpty { isShowingFixSheet = true }
-        recalcTotals(live: true)
-    }
-
     // MARK: - Photo picker
     func startPhotoPick() { }
 
@@ -66,13 +52,17 @@ final class ScannerViewModel: ObservableObject {
     func handleCroppedNumbers(_ nums: [Double], fixes: [FixCandidate]) {
         resetNumbers()
         photoNumbers   = nums
-        pendingFixes   = fixes
+        // Static scan low-confidence fixes
+        if !fixes.isEmpty {
+            pendingFixes.append(contentsOf: fixes)
+            // Show sheet only if not already shown
+            if !isShowingFixSheet { isShowingFixSheet = true }
+        }
         // navVM closes cropper afterwards
         if fixes.isEmpty {
             recalcTotals()
         } else {
-            pendingFixes.append(contentsOf: fixes)
-            isShowingFixSheet = true
+            recalcTotals()
         }
     }
 
@@ -96,11 +86,10 @@ final class ScannerViewModel: ObservableObject {
     }
 
     /// Recompute totals when any source updates
-    private func recalcTotals(live: Bool = false) {
-        numbers = capturedNumbers + photoNumbers + liveNumbers
+    private func recalcTotals() {
+        numbers = capturedNumbers + photoNumbers
         sum     = numbers.reduce(0, +)
 
-        guard !live else { return }            // skip alert for video frames
         lastSum      = sum
         showSumAlert = true
     }
@@ -109,7 +98,27 @@ final class ScannerViewModel: ObservableObject {
     private func resetNumbers() {
         capturedNumbers.removeAll()
         photoNumbers.removeAll()
+    }
+
+    // MARK: - Live Scan
+    @MainActor
+    func startLiveScan() {
         liveNumbers.removeAll()
+        liveSum = 0
+        currentFix = nil
+    }
+
+    /// Update the live-OCR list after the user corrects a digit.
+    /// - Parameters:
+    ///   - old: The original (possibly wrong) value if known.
+    ///   - new: The user-entered corrected value.
+    func applyLiveCorrection(old: Double?, new: Double) {
+        if let old, let idx = liveNumbers.firstIndex(of: old) {
+            liveNumbers[idx] = new          // replace incorrect value
+        } else {
+            liveNumbers.append(new)         // add if old not found / nil
+        }
+        liveSum = liveNumbers.reduce(0, +)  // refresh running total shown in overlay
     }
 
     // MARK: - Persistence

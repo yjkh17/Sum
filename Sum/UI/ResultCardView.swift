@@ -5,6 +5,7 @@ struct ResultCardView: View {
     let numbers: [Double]
     private let indexed: [IndexedNumber]
     private let formatter: NumberFormatter
+    @State private var isAnimating = false
 
     init(sum: Double, numbers: [Double]) {
         self.sum      = sum
@@ -19,33 +20,48 @@ struct ResultCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // TOTAL
-            Text("Total")
-                .font(.headline)
-                .foregroundStyle(.secondary)
+            // MARK: - Total Section
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Total")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                    .opacity(isAnimating ? 1 : 0)
+                    .offset(y: isAnimating ? 0 : 10)
 
-            Text(formatter.string(from: sum as NSNumber) ?? "")
-                .font(.system(size: 42, weight: .bold))
-                .minimumScaleFactor(0.5)
-                .lineLimit(1)
+                Text(formatter.string(from: sum as NSNumber) ?? "")
+                    .font(.system(size: 42, weight: .bold))
+                    .minimumScaleFactor(0.5)
+                    .lineLimit(1)
+                    .opacity(isAnimating ? 1 : 0)
+                    .scaleEffect(isAnimating ? 1 : 0.8, anchor: .leading)
+            }
 
-            // LIST OF NUMBERS
+            // MARK: - Items Section
             if !numbers.isEmpty {
                 Divider()
+                    .opacity(isAnimating ? 1 : 0)
+                
                 Text("Items")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .opacity(isAnimating ? 1 : 0)
+                    .offset(y: isAnimating ? 0 : 10)
 
                 // Wrap numbers in a simple flow-layout
-                FlexibleView(data: indexed,
-                             spacing: 8, alignment: .leading) { item in
-                    let value = item.value
-                    Text(formatter.string(from: value as NSNumber) ?? "")
+                FlexibleView(data: indexed, spacing: 8, alignment: .leading) { item in
+                    Text(formatter.string(from: item.value as NSNumber) ?? "")
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color(.secondarySystemBackground))
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.primary.opacity(0.1))
+                        )
+                        .opacity(isAnimating ? 1 : 0)
+                        .offset(y: isAnimating ? 0 : 20)
+                        .animation(
+                            .spring(dampingFraction: 0.7)
+                            .delay(Double(item.index) * 0.05),
+                            value: isAnimating
                         )
                 }
             }
@@ -53,11 +69,21 @@ struct ResultCardView: View {
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
+                .shadow(
+                    color: .black.opacity(0.1),
+                    radius: 15,
+                    x: 0,
+                    y: 5
+                )
         )
         .padding()
+        .onAppear {
+            withAnimation(.spring(dampingFraction: 0.7)) {
+                isAnimating = true
+            }
+        }
     }
 }
 

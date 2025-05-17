@@ -15,13 +15,19 @@ final class SampleStore {
     }()
 
     /// يحفظ القصاصة بعد تصغيرها إلى ‎28×28‎ لتقليل الحجم
-    func save(image cg: CGImage, label: Int) {
-        let ui  = UIImage(cgImage: cg)
-        let img = ui.preparingThumbnail(of: .init(width: 28, height: 28)) ?? ui
+    func saveSample(_ image: UIImage, digit: Int) {
+        let img = image.preparingThumbnail(of: .init(width: 28, height: 28)) ?? image
         guard let data = img.pngData() else { return }
-        let name = "\(label)_\(UUID().uuidString).png"
+        let name = "\(digit)_\(UUID().uuidString).png"
         let url = dir.appendingPathComponent(name)
         do { try data.write(to: url, options: .atomic) }
         catch { print("[SampleStore] save failed:", error) }
+    }
+}
+
+extension SampleStore {
+    static func save(image: CGImage, as digit: Int) {
+        let ui = UIImage(cgImage: image)
+        SampleStore.shared.saveSample(ui, digit: digit)   
     }
 }

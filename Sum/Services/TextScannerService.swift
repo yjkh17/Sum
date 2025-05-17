@@ -9,138 +9,184 @@ struct NumberObservation: Identifiable, Hashable {
     let confidence: Float
 }
 
-// MARK: - FixCandidate (رقم منخفض الثقة يحتاج تصحيح)
+// MARK: - FixCandidate
 struct FixCandidate: Identifiable {
     let id = UUID()
-    let image: CGImage      // صورة القصاصة
-    let rect : CGRect       // مكانها فى الصورة الأصليّة
-    var suggested: Int?     // ما اقترحه Vision / CoreML
-    let confidence: Float
+    let image: CGImage      // cropped digit image
+    let rect: CGRect       // location in source image
+    var suggested: Int?     // Vision/CoreML suggestion
+    let confidence: Float   // 0...1
+
+    // Convenience init for Live-OCR
+    init(image: CGImage,
+         rect:  CGRect,
+         suggested: Int?,
+         confidence: Float)
+    {
+        self.image       = image
+        self.rect        = rect
+        self.suggested   = suggested
+        self.confidence  = confidence
+    }
 }
 
-// يُحدَّث من الـ ViewModel
 enum TextScannerService {
     static var currentSystem: NumberSystem = .western
-
-    // regex مشتقّ من الاختيار الحالى (النوع الجديد Regex<Substring>)
-    private static var numberRegex: Regex<Substring> {
-        currentSystem.regex
+    
+    // MARK: - Constants
+    private enum Confidence {
+        static let lowThreshold: Float = 0.30
+        static let mediumThreshold: Float = 0.60
+        static let highThreshold: Float = 0.80
     }
 
-    // خريطة التحويل ٠→0 … إلخ
+    // MARK: - Character Conversion
     private static let east2west: [Character: Character] = [
         "٠":"0","١":"1","٢":"2","٣":"3","٤":"4",
         "٥":"5","٦":"6","٧":"7","٨":"8","٩":"9",
         "۰":"0","۱":"1","۲":"2","۳":"3","۴":"4",
         "۵":"5","۶":"6","۷":"7","۸":"8","۹":"9"
     ]
+    
     static func normalize(_ s: String) -> String {
         String(s.map { east2west[$0] ?? $0 })
     }
 
+    // MARK: - Core Recognition
     /// أرقام قد تحتوى على فواصل آلاف «12,000» أو كسور «7,500.50»
     /// مثال للـregex:  1,234   12,000   7500   7,500.50   123.45
     static func recognizeNumbers(in cgImage: CGImage) async throws -> [Double] {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel       = .accurate
-        request.usesLanguageCorrection = false
-        request.recognitionLanguages   = currentSystem.ocrLanguages
-
-        try VNImageRequestHandler(cgImage: cgImage, options: [:])
-            .perform([request])
-
-        let observations = request.results ?? []
-        print("[OCR] Observations count = \(observations.count)")   // DEBUG
-        var numbers: [Double] = []
-
-        for observation in observations {
-            guard let text = observation.topCandidates(1).first?.string else { continue }
-            print("[OCR] Line: “\(text)”")                           // DEBUG
-            numbers.append(contentsOf: extractNumbers(from: text))
-        }
-        print("[OCR] Extracted numbers = \(numbers)")                // DEBUG
-        return numbers
+        let request = makeTextRequest()
+        try await performRequest(request, on: cgImage)
+        return extractNumbers(from: request.results ?? [])
     }
-
-    private static func extractNumbers(from text: String) -> [Double] {
-        let rawMatches = text.matches(of: numberRegex)
-        return rawMatches.compactMap { match in
-            // احصل على السلسلة المطابقة ثم أزل الفواصل قبل التحويل إلى ‎Double‎
-            var raw = String(text[match.range])
-            raw     = raw.replacingOccurrences(of: ",", with: "")
-            if currentSystem == .eastern { raw = normalize(raw) }
-            let clean = raw
-            return Double(clean)
-        }
-    }
-
-    // MARK: - New helper returning value+rect
+    
+    // MARK: - Advanced Recognition
     static func recognizeNumberObservations(in cgImage: CGImage)
     async throws -> ([NumberObservation], [FixCandidate]) {
+        let request = makeTextRequest()
+        try await performRequest(request, on: cgImage)
+        return processObservations(request.results ?? [], in: cgImage)
+    }
+    
+    // MARK: - Private Helpers
+    private static func makeTextRequest() -> VNRecognizeTextRequest {
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel       = .accurate
+        request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
-        request.recognitionLanguages   = currentSystem.ocrLanguages
-
-        try VNImageRequestHandler(cgImage: cgImage, options: [:])
-            .perform([request])
-
-        let observations = request.results ?? []
-        var result : [NumberObservation] = []
-        var fixes  : [FixCandidate]      = []
-
-        let imgW = CGFloat(cgImage.width)
-        let imgH = CGFloat(cgImage.height)
-
+        request.recognitionLanguages = currentSystem.ocrLanguages
+        return request
+    }
+    
+    private static func performRequest(_ request: VNRecognizeTextRequest, on image: CGImage) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            do {
+                try VNImageRequestHandler(cgImage: image, options: [:])
+                    .perform([request])
+                continuation.resume()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+    
+    private static func extractNumbers(from observations: [VNRecognizedTextObservation]) -> [Double] {
+        observations.flatMap { obs -> [Double] in
+            guard let text = obs.topCandidates(1).first?.string else { return [] }
+            return extractNumbers(from: text)
+        }
+    }
+    
+    private static func extractNumbers(from text: String) -> [Double] {
+        text.matches(of: currentSystem.regex).compactMap { match in
+            var raw = String(text[match.range])
+                .replacingOccurrences(of: ",", with: "")
+            if currentSystem == .eastern {
+                raw = normalize(raw)
+            }
+            return Double(raw)
+        }
+    }
+    
+    private static func processObservations(_ observations: [VNRecognizedTextObservation], in image: CGImage) -> ([NumberObservation], [FixCandidate]) {
+        // Use capacity hint for better array performance
+        var result = [NumberObservation]()
+        result.reserveCapacity(observations.count)
+        var fixes = [FixCandidate]()
+        fixes.reserveCapacity(observations.count / 2)
+        
+        let imgW = CGFloat(image.width)
+        let imgH = CGFloat(image.height)
+        
         for obs in observations {
             guard let str = obs.topCandidates(1).first?.string else { continue }
-
-            for match in str.matches(of: numberRegex) {
-                var raw = String(str[match.range])
-                raw     = raw.replacingOccurrences(of: ",", with: "")
-                if currentSystem == .eastern { raw = normalize(raw) }
-                let clean = raw
-
-                guard let val = Double(clean) else { continue }
-
-                // --- Bounding box (pixel coordinates) for this VNTextObservation ---
-                let box = obs.boundingBox
-                let rect = CGRect(
-                    x: box.minX * imgW,
-                    y: (1 - box.maxY) * imgH,
-                    width: box.width  * imgW,
-                    height: box.height * imgH
-                )
-
-                // --------- Fallback → Core-ML لتحسين الثقة ---------
-                var conf = obs.confidence
-                if obs.confidence < 0.60,                          // Vision متردد
-                   currentSystem == .western,                      // يدعم الغربية حالياً
-                   let crop = cgImage.cropping(to: rect.integral),
-                   let (digit, mlConf) =
-                        try? DigitClassifierService.predictDigit(from: crop),
-                   mlConf > 0.80 {                                 // الموديل واثق
-                    conf  = max(conf, Float(mlConf))
-                    result.append(.init(value: Double(digit),
-                                       rect: rect,
-                                       confidence: conf))
-                    continue                                       // تخطِّ Vision
+            
+            // Process all matches in one pass
+            let matches = str.matches(of: currentSystem.regex)
+            let processedMatches = matches.compactMap { match -> (Double, CGRect)? in
+                guard let (val, rect) = processMatch(match, in: str, observation: obs, imageSize: CGSize(width: imgW, height: imgH)) else { return nil }
+                return (val, rect)
+            }
+            
+            for (val, rect) in processedMatches {
+                let confidence = obs.confidence
+                
+                // Try CoreML only if really needed
+                if shouldTryMLRefinement(confidence: confidence),
+                   let (mlDigit, mlConf) = tryMLRefinement(for: rect, in: image) {
+                    let newConf = max(confidence, Float(mlConf))
+                    result.append(.init(value: Double(mlDigit), rect: rect, confidence: newConf))
+                    continue
                 }
-                // --------------------------------------------------------------------
-
-                // VN observation’s boundingBox is in unit space, flip Y (already done above)
-                result.append(.init(value: val, rect: rect, confidence: conf))
-
-                // ✦ مرشَّح للتصحيح إذا الثقة < 0.30
-                if obs.confidence < 0.30,
-                   let sub = cgImage.cropping(to: rect.integral) {
-                    fixes.append(.init(image: sub,
-                                       rect: rect,
-                                       suggested: Int(val),
-                                       confidence: conf))
+                
+                result.append(.init(value: val, rect: rect, confidence: confidence))
+                
+                if shouldAddFixCandidate(confidence: confidence),
+                   let cropped = image.cropping(to: rect.integral) {
+                    fixes.append(.init(image: cropped,
+                                     rect: rect,
+                                     suggested: Int(val),
+                                     confidence: confidence))
                 }
             }
         }
+        
         return (result, fixes)
+    }
+    
+    private static func processMatch(_ match: Regex<Substring>.Match, in text: String, observation: VNRecognizedTextObservation, imageSize: CGSize) -> (value: Double, rect: CGRect)? {
+        var raw = String(text[match.range])
+            .replacingOccurrences(of: ",", with: "")
+        if currentSystem == .eastern {
+            raw = normalize(raw)
+        }
+        guard let val = Double(raw) else { return nil }
+        
+        let box = observation.boundingBox
+        let rect = CGRect(
+            x: box.minX * imageSize.width,
+            y: (1 - box.maxY) * imageSize.height,
+            width: box.width * imageSize.width,
+            height: box.height * imageSize.height
+        )
+        
+        return (val, rect)
+    }
+    
+    private static func shouldTryMLRefinement(confidence: Float) -> Bool {
+        confidence < Confidence.mediumThreshold && currentSystem == .western
+    }
+    
+    private static func tryMLRefinement(for rect: CGRect, in image: CGImage) -> (digit: Int, confidence: Double)? {
+        guard let crop = image.cropping(to: rect.integral),
+              let (digit, confidence) = try? DigitClassifierService.predictDigit(from: crop),
+              Float(confidence) > Confidence.highThreshold else {
+            return nil
+        }
+        return (digit, confidence)
+    }
+    
+    private static func shouldAddFixCandidate(confidence: Float) -> Bool {
+        confidence < Confidence.lowThreshold
     }
 }
