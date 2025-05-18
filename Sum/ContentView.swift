@@ -89,11 +89,11 @@ struct ContentView: View {
             HStack {
                 // Leading items
                 HStack(spacing: 16) {
-                    Button { navVM.isShowingScanner = true } label: {
+                    Button { navVM.show(.scanner) } label: {
                         Label("Scan", systemImage: "camera.viewfinder")
                             .symbolEffect(.bounce, value: navVM.isShowingScanner)
                     }
-                    Button { navVM.isShowingPhotoPicker = true } label: {
+                    Button { navVM.show(.picker) } label: {
                         Label("Photo", systemImage: "photo.on.rectangle")
                             .symbolEffect(.bounce, value: navVM.isShowingPhotoPicker)
                     }
@@ -106,7 +106,7 @@ struct ContentView: View {
                     if #available(iOS 17.0, *) {
                         Button {
                             scanVM.startLiveScan()
-                            navVM.isShowingLiveScanner = true
+                            navVM.show(.live)
                         } label: {
                             Label("Live", systemImage: "eye")
                                 .symbolEffect(.bounce, value: navVM.isShowingLiveScanner)
@@ -211,8 +211,8 @@ struct ContentView: View {
                 NavigationStack {
                     PhotoPickerView { img in
                         scanVM.handlePickedImage(img)
-                        navVM.isShowingPhotoPicker = false
-                        navVM.isShowingCropper     = true
+                        navVM.hideCurrent()
+                        navVM.show(.cropper)
                     }
                     .navigationTitle("Choose a Photo")
                     .navigationBarTitleDisplayMode(.inline)
@@ -258,8 +258,8 @@ struct ContentView: View {
                         ImageCropperView(image: uiImage) { cropImage, obs, fixes in
                             scanVM.handleCroppedNumbers(obs.map(\.value), fixes: fixes)
                             scanVM.receiveCroppedResult(image: cropImage, observations: obs)
-                            navVM.isShowingCropper = false
-                            navVM.isShowingResult  = true
+                            navVM.hideCurrent()
+                            navVM.show(.result)
                         }
                         .navigationBarTitleDisplayMode(.inline)
                     }
@@ -270,7 +270,7 @@ struct ContentView: View {
                 if let img = scanVM.croppedImage,
                    let obs = scanVM.croppedObservations {
                     CroppedResultView(image: img, observations: obs)
-                        .onTapGesture { navVM.isShowingResult = false }
+                        .onTapGesture { navVM.hideCurrent() }
                 }
             }
             // MARK: - Fix-digit sheet
@@ -298,6 +298,7 @@ struct ContentView: View {
                             await requestCameraPermission()
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                 isReady = true
+                                navVM.restoreLastState()
                             }
                         }
                     }
