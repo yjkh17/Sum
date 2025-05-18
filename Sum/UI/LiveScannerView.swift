@@ -53,8 +53,13 @@ struct LiveScannerView: UIViewControllerRepresentable {
             context.coordinator.system = numberSystem
         }
         // Propagate crop rectangle changes
+
+        if context.coordinator.activeCropRect != cropRect {
+            context.coordinator.activeCropRect = cropRect
+
         if context.coordinator.cropRect != cropRect {
             context.coordinator.cropRect = cropRect
+
         }
     }
 
@@ -63,6 +68,10 @@ struct LiveScannerView: UIViewControllerRepresentable {
         let parent: LiveScannerView
         private var lastSet: Set<Double> = []
         var system: NumberSystem
+
+        var activeCropRect: CGRect? = nil
+        private var lastCropRect: CGRect? = nil
+
 
         var cropRect: CGRect? = nil {
             didSet {
@@ -78,6 +87,7 @@ struct LiveScannerView: UIViewControllerRepresentable {
 
         var cropRect: CGRect? = nil
         private var lastCropRect: CGRect? = nil
+
 
         private let highlights: Binding<[CGRect]>
         private let highlightConfs: Binding<[Float]>
@@ -121,18 +131,33 @@ struct LiveScannerView: UIViewControllerRepresentable {
             guard now - lastProcessedTime >= frameInterval else { return }
             lastProcessedTime = now
 
+            if activeCropRect != lastCropRect {
+                lastCropRect = activeCropRect
+                lastSet.removeAll()
+                valueCounts.removeAll()
+                valueData.removeAll()
+                highlights.wrappedValue.removeAll()
+                highlightConfs.wrappedValue.removeAll()
+            }
+
             tapFixes.removeAll()
             var currentFrame: [(value: Double, pixel: CGRect, unit: CGRect, conf: Float)] = []
 
             let hostSize = scanner.view?.bounds.size ?? .zero
 
             // Convert crop rect from unit space to pixel space for filtering
+
+            let cropPixelRect: CGRect? = activeCropRect.map { r in
+
             let cropPixelRect: CGRect? = cropRect.map { r in
+
                 CGRect(x: r.minX * hostSize.width,
                        y: r.minY * hostSize.height,
                        width: r.width * hostSize.width,
                        height: r.height * hostSize.height)
             }
+
+
 
 
 
@@ -143,6 +168,7 @@ struct LiveScannerView: UIViewControllerRepresentable {
                 valueData.removeAll()
                 lastCropRect = cropRect
             }
+
 
 
 
