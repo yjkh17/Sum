@@ -207,16 +207,16 @@ final class ScannerViewModel: ObservableObject {
     /// Recompute totals when any source updates
     private func recalcTotals() {
         numbers = capturedNumbers + photoNumbers
-        sum     = numbers.reduce(0, +)
-
-        lastSum      = sum
+        sum = numbers.reduce(0, +)
+        lastSum = sum
         showSumAlert = true
     }
 
     // MARK: - Helpers
     private func resetNumbers() {
-        capturedNumbers.removeAll()
-        photoNumbers.removeAll()
+        capturedNumbers = []
+        photoNumbers = []
+        liveNumbers.reserveCapacity(10)
     }
 
     // MARK: - Live Scan
@@ -405,7 +405,7 @@ final class ScannerViewModel: ObservableObject {
         let totalCount = Double(images.count)
         let processedCount = Atomic(0)
         
-        let chunkSize = 5
+        let chunkSize = max(5, images.count / 4) // Adaptive chunk size
         let chunks = stride(from: 0, through: images.count - 1, by: chunkSize).map {
             Array(images[($0)..<min($0 + chunkSize, images.count)])
         }
