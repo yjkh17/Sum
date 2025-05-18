@@ -52,6 +52,10 @@ struct LiveScannerView: UIViewControllerRepresentable {
         if context.coordinator.system != numberSystem {
             context.coordinator.system = numberSystem
         }
+        // Propagate crop rectangle changes
+        if context.coordinator.cropRect != cropRect {
+            context.coordinator.cropRect = cropRect
+        }
     }
 
     @MainActor
@@ -59,12 +63,26 @@ struct LiveScannerView: UIViewControllerRepresentable {
         let parent: LiveScannerView
         private var lastSet: Set<Double> = []
         var system: NumberSystem
-        var cropRect: CGRect? = nil
+        var cropRect: CGRect? = nil {
+            didSet {
+                if oldValue != cropRect {
+                    lastSet.removeAll()
+                    valueCounts.removeAll()
+                    valueData.removeAll()
+                    highlights.wrappedValue.removeAll()
+                    highlightConfs.wrappedValue.removeAll()
+                }
+            }
+        }
         private let highlights: Binding<[CGRect]>
         private let highlightConfs: Binding<[Float]>
         private let onFixTap: (FixCandidate) -> Void
         weak var scannerVC: DataScannerViewController?
         private var tapFixes: [(rect: CGRect, value: Double, conf: Float)] = []
+
+        // Track detection stability across frames
+        private var valueCounts: [Double: Int] = [:]
+        private var valueData: [Double: (pixel: CGRect, unit: CGRect, conf: Float)] = [:]
 
         private var lastProcessedTime: CFTimeInterval = 0
         private let frameInterval: CFTimeInterval = 1.0 / 30.0
@@ -99,11 +117,17 @@ struct LiveScannerView: UIViewControllerRepresentable {
             lastProcessedTime = now
 
             tapFixes.removeAll()
-            var current = Set<Double>()
-            var rects = [CGRect]()      // unit-space rects for highlight overlay
-            var confs = [Float]()       // matching confidences
+            var currentFrame: [(value: Double, pixel: CGRect, unit: CGRect, conf: Float)] = []
 
             let hostSize = scanner.view?.bounds.size ?? .zero
+
+            // Convert crop rect from unit space to pixel space for filtering
+            let cropPixelRect: CGRect? = cropRect.map { r in
+                CGRect(x: r.minX * hostSize.width,
+                       y: r.minY * hostSize.height,
+                       width: r.width * hostSize.width,
+                       height: r.height * hostSize.height)
+            }
 
             for item in items {
                 if case let .text(textItem) = item {
@@ -132,6 +156,10 @@ struct LiveScannerView: UIViewControllerRepresentable {
 
                         pixelRect = pixelRect.insetBy(dx: -20, dy: -20).integral
 
+                        if let cropPx = cropPixelRect, !pixelRect.intersects(cropPx) {
+                            continue
+                        }
+
                         // Convert to unit space for the overlay
                         let unitRect = CGRect(
                             x: pixelRect.minX / hostSize.width,
@@ -140,17 +168,48 @@ struct LiveScannerView: UIViewControllerRepresentable {
                             height: pixelRect.height / hostSize.height
                         )
 
-                        current.insert(value)
-                        rects.append(unitRect)
-                        confs.append(0.9)
-                        tapFixes.append((rect: pixelRect, value: value, conf: 0.9))
+                        currentFrame.append((value: value,
+                                             pixel: pixelRect,
+                                             unit: unitRect,
+                                             conf: 0.9))
                     }
                 }
             }
 
-            if current != lastSet {
-                lastSet = current
-                let nums = Array(current).sorted()
+            // Update detection stability maps
+            let currentValues = Set(currentFrame.map { $0.value })
+            for val in currentValues {
+                valueCounts[val, default: 0] += 1
+            }
+            for key in Array(valueCounts.keys) {
+                if !currentValues.contains(key) {
+                    valueCounts[key] = max((valueCounts[key] ?? 0) - 1, 0)
+                }
+            }
+            for (val, count) in valueCounts where count == 0 {
+                valueCounts.removeValue(forKey: val)
+                valueData.removeValue(forKey: val)
+            }
+            for data in currentFrame {
+                valueData[data.value] = (pixel: data.pixel, unit: data.unit, conf: data.conf)
+            }
+
+            let stableValues = valueCounts.filter { $0.value >= 2 }.map { $0.key }
+            var rects = [CGRect]()
+            var confs = [Float]()
+            tapFixes.removeAll()
+            for val in stableValues {
+                if let data = valueData[val] {
+                    rects.append(data.unit)
+                    confs.append(data.conf)
+                    tapFixes.append((rect: data.pixel, value: val, conf: data.conf))
+                }
+            }
+
+            let stableSet = Set(stableValues)
+            if stableSet != lastSet {
+                lastSet = stableSet
+                let nums = stableValues.sorted()
 
                 Task { @MainActor in
                     withAnimation(.easeInOut(duration: 0.15)) {
