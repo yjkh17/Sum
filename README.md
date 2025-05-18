@@ -24,13 +24,15 @@ The app requests camera and photo library permissions on first launch so it can 
 
 ## Running Tests
 
-Run the unit tests using `xcodebuild` with an iOS simulator:
+Run the unit tests on the command line using `xcodebuild` with an iOS simulator:
 
 ```bash
 xcodebuild test -scheme Sum -destination 'platform=iOS Simulator,name=iPhone 15'
 ```
 
 The exact simulator name may vary depending on the Xcode version installed.
+
+You can also run the tests directly in Xcode using the **Test navigator** (⌘+6) or by pressing **Command-U** with the **Sum** scheme selected.
 
 ## Continuous Integration
 
