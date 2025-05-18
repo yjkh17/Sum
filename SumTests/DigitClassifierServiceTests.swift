@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import Sum
 
 final class DigitClassifierServiceTests: XCTestCase {
