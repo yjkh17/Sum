@@ -107,6 +107,15 @@ struct LiveScannerView: UIViewControllerRepresentable {
             guard now - lastProcessedTime >= frameInterval else { return }
             lastProcessedTime = now
 
+            if activeCropRect != lastCropRect {
+                lastCropRect = activeCropRect
+                lastSet.removeAll()
+                valueCounts.removeAll()
+                valueData.removeAll()
+                highlights.wrappedValue.removeAll()
+                highlightConfs.wrappedValue.removeAll()
+            }
+
             tapFixes.removeAll()
             var currentFrame: [(value: Double, pixel: CGRect, unit: CGRect, conf: Float)] = []
 
