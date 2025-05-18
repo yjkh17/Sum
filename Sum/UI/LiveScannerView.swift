@@ -63,6 +63,7 @@ struct LiveScannerView: UIViewControllerRepresentable {
         let parent: LiveScannerView
         private var lastSet: Set<Double> = []
         var system: NumberSystem
+
         var cropRect: CGRect? = nil {
             didSet {
                 if oldValue != cropRect {
@@ -74,6 +75,10 @@ struct LiveScannerView: UIViewControllerRepresentable {
                 }
             }
         }
+
+        var cropRect: CGRect? = nil
+        private var lastCropRect: CGRect? = nil
+
         private let highlights: Binding<[CGRect]>
         private let highlightConfs: Binding<[Float]>
         private let onFixTap: (FixCandidate) -> Void
@@ -128,6 +133,19 @@ struct LiveScannerView: UIViewControllerRepresentable {
                        width: r.width * hostSize.width,
                        height: r.height * hostSize.height)
             }
+
+
+
+
+            // Clear history when the crop region changes
+            if cropRect != lastCropRect {
+                valueCounts.removeAll()
+                valueData.removeAll()
+                lastCropRect = cropRect
+            }
+
+
+
 
             for item in items {
                 if case let .text(textItem) = item {
