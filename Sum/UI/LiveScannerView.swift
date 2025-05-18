@@ -103,8 +103,6 @@ struct LiveScannerView: UIViewControllerRepresentable {
             var rects = [CGRect]()
             var confs = [Float]()
 
-            let hostSize = scanner.view?.bounds.size ?? .zero
-
             for item in items {
                 if case let .text(textItem) = item {
                     let str = textItem.transcript.trimmingCharacters(in: .whitespaces)
@@ -122,15 +120,17 @@ struct LiveScannerView: UIViewControllerRepresentable {
                        !value.isInfinite,
                        !value.isNaN {
 
-                        let bounds = textItem.bounds
-                        var rect = CGRect(
-                            x: bounds.topLeft.x * hostSize.width,
-                            y: bounds.topLeft.y * hostSize.height,
-                            width: (bounds.topRight.x - bounds.topLeft.x) * hostSize.width,
-                            height: (bounds.bottomLeft.y - bounds.topLeft.y) * hostSize.height
-                        )
 
-                        rect = rect.insetBy(dx: -20, dy: -20).integral
+                        let bounds = textItem.bounds
+                        let padX = 20 / (scanner.view?.bounds.width ?? 1)
+                        let padY = 20 / (scanner.view?.bounds.height ?? 1)
+                        var rect = CGRect(
+                            x: bounds.topLeft.x - padX,
+                            y: bounds.topLeft.y - padY,
+                            width: (bounds.topRight.x - bounds.topLeft.x) + padX * 2,
+                            height: (bounds.bottomLeft.y - bounds.topLeft.y) + padY * 2
+                        )
+                        rect = rect.standardized
 
                         current.insert(value)
                         rects.append(rect)
@@ -163,13 +163,14 @@ struct LiveScannerView: UIViewControllerRepresentable {
             }
 
             let info = tapFixes[index]
+            let hostSize = host.bounds.size
             let imageScale = image.scale
 
             let px = CGRect(
-                x: info.rect.minX * imageScale,
-                y: info.rect.minY * imageScale,
-                width: info.rect.width * imageScale,
-                height: info.rect.height * imageScale
+                x: info.rect.minX * hostSize.width * imageScale,
+                y: info.rect.minY * hostSize.height * imageScale,
+                width: info.rect.width * hostSize.width * imageScale,
+                height: info.rect.height * hostSize.height * imageScale
             ).integral
 
             guard px.width > 4 && px.height > 4 else {
