@@ -9,7 +9,14 @@
 /* Begin PBXFileReference section */
                 CACF5ECB2DD38B1900C3253D /* Sum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sum.app; sourceTree = BUILT_PRODUCTS_DIR; };
                 32a0b4ed532b41b9b97d475a /* SumTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SumTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+                81cf9f44aa3c4a3eb5bf2b63 /* DigitClassifierServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SumTests/DigitClassifierServiceTests.swift; sourceTree = "<group>"; };
+                66cd1497be13459188f79914 /* TextScannerServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SumTests/TextScannerServiceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXBuildFile section */
+                5f4c741f6d8444efb642dc9c /* DigitClassifierServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81cf9f44aa3c4a3eb5bf2b63 /* DigitClassifierServiceTests.swift */; };
+                d5af4d7cbc72452b97bb13e1 /* TextScannerServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66cd1497be13459188f79914 /* TextScannerServiceTests.swift */; };
+/* End PBXBuildFile section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		CACF5EE72DD3917800C3253D /* Exceptions for "Sum" folder in "Sum" target */ = {
@@ -184,6 +191,8 @@
                         isa = PBXSourcesBuildPhase;
                         buildActionMask = 2147483647;
                         files = (
+                                5f4c741f6d8444efb642dc9c /* DigitClassifierServiceTests.swift in Sources */,
+                                d5af4d7cbc72452b97bb13e1 /* TextScannerServiceTests.swift in Sources */,
                         );
                         runOnlyForDeploymentPostprocessing = 0;
                 };
