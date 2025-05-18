@@ -120,12 +120,15 @@ struct LiveScannerView: UIViewControllerRepresentable {
                        height: r.height * hostSize.height)
             }
 
+
             // Clear history when the crop region changes
             if cropRect != lastCropRect {
                 valueCounts.removeAll()
                 valueData.removeAll()
                 lastCropRect = cropRect
             }
+
+=======
 
             for item in items {
                 if case let .text(textItem) = item {
