@@ -1,5 +1,7 @@
 import SwiftUI
 import SwiftData
+import AVFoundation
+import VisionKit
 
 // MARK: - History List Item
 private struct HistoryRow: View {
@@ -79,170 +81,237 @@ struct ContentView: View {
         }
     }
 
+    private struct CustomToolbar: View {
+        @ObservedObject var navVM: NavigationViewModel
+        @ObservedObject var scanVM: ScannerViewModel
+        
+        var body: some View {
+            HStack {
+                // Leading items
+                HStack(spacing: 16) {
+                    Button { navVM.isShowingScanner = true } label: {
+                        Label("Scan", systemImage: "camera.viewfinder")
+                            .symbolEffect(.bounce, value: navVM.isShowingScanner)
+                    }
+                    Button { navVM.isShowingPhotoPicker = true } label: {
+                        Label("Photo", systemImage: "photo.on.rectangle")
+                            .symbolEffect(.bounce, value: navVM.isShowingPhotoPicker)
+                    }
+                }
+                
+                Spacer()
+                
+                // Trailing items
+                HStack(spacing: 16) {
+                    if #available(iOS 17.0, *) {
+                        Button {
+                            scanVM.startLiveScan()
+                            navVM.isShowingLiveScanner = true
+                        } label: {
+                            Label("Live", systemImage: "eye")
+                                .symbolEffect(.bounce, value: navVM.isShowingLiveScanner)
+                        }
+                    }
+                    
+                    Menu {
+                        Picker("Digits", selection: $scanVM.storedSystem) {
+                            Text("Western 0-9").tag(NumberSystem.western)
+                            Text("Eastern ٠-٩").tag(NumberSystem.eastern)
+                        }
+                    } label: {
+                        Image(systemName: "textformat.123")
+                            .symbolVariant(.circle)
+                    }
+                    
+                    EditButton()
+                }
+            }
+            .padding()
+            .background(.bar)
+        }
+    }
+    
+    private struct CompactView: View {
+        @ObservedObject var navVM: NavigationViewModel
+        @ObservedObject var scanVM: ScannerViewModel
+        let masterList: AnyView
+        
+        var body: some View {
+            NavigationStack {
+                masterList
+                    .navigationTitle("History")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        RootToolbar(
+                            showScanner: $navVM.isShowingScanner,
+                            showPhotoPicker: $navVM.isShowingPhotoPicker,
+                            showLiveScanner: $navVM.isShowingLiveScanner,
+                            numberSystem: $scanVM.storedSystem,
+                            onStartLiveScan: scanVM.startLiveScan
+                        )
+                    }
+            }
+        }
+    }
+    
+    private struct SplitView: View {
+        @ObservedObject var navVM: NavigationViewModel
+        @ObservedObject var scanVM: ScannerViewModel
+        let masterList: AnyView
+        let detailPane: AnyView
+        
+        var body: some View {
+            NavigationSplitView {
+                masterList
+                    .navigationTitle("History")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        RootToolbar(
+                            showScanner: $navVM.isShowingScanner,
+                            showPhotoPicker: $navVM.isShowingPhotoPicker,
+                            showLiveScanner: $navVM.isShowingLiveScanner,
+                            numberSystem: $scanVM.storedSystem,
+                            onStartLiveScan: scanVM.startLiveScan
+                        )
+                    }
+            } detail: {
+                detailPane
+            }
+        }
+    }
+
+    private struct MainContentView: View {
+        @ObservedObject var navVM: NavigationViewModel
+        @ObservedObject var scanVM: ScannerViewModel
+        @Environment(\.horizontalSizeClass) private var hSize
+        let masterList: AnyView
+        let detailPane: AnyView
+        
+        @Binding var liveCrop: CGRect?
+        @Binding var liveHighlights: [CGRect]
+        @Binding var liveConfs: [Float]
+        @Binding var liveScannerCoord: LiveScannerView.Coordinator?
+        
+        var body: some View {
+            Group {
+                if hSize == .compact {
+                    CompactView(navVM: navVM, scanVM: scanVM, masterList: masterList)
+                } else {
+                    SplitView(navVM: navVM, scanVM: scanVM, masterList: masterList, detailPane: detailPane)
+                }
+            }
+            // MARK: - Document scanner
+            .sheet(isPresented: $navVM.isShowingScanner) {
+                DocumentScannerView { nums in
+                    scanVM.handleScanCompleted(nums)
+                }
+            }
+            // MARK: - Photo picker
+            .fullScreenCover(isPresented: $navVM.isShowingPhotoPicker) {
+                NavigationStack {
+                    PhotoPickerView { img in
+                        scanVM.handlePickedImage(img)
+                        navVM.isShowingPhotoPicker = false
+                        navVM.isShowingCropper     = true
+                    }
+                    .navigationTitle("Choose a Photo")
+                    .navigationBarTitleDisplayMode(.inline)
+                }
+            }
+            // MARK: - Live OCR
+            .fullScreenCover(isPresented: $navVM.isShowingLiveScanner) {
+                if #available(iOS 17.0, *) {
+                    NavigationStack {
+                        LiveScannerView(
+                            numberSystem: $scanVM.storedSystem,
+                            onNumbersUpdate: { nums in
+                                print("LiveScanner detected: \(nums)")  // Debug
+                                scanVM.handleLiveNumbersUpdate(nums)
+                            },
+                            highlights: $liveHighlights,
+                            highlightConfs: $liveConfs,
+                            cropRect: $liveCrop,
+                            onFixTap: { fix in
+                                scanVM.currentFix = fix
+                            },
+                            onCoordinatorReady: { c in
+                                print("LiveScanner coordinator ready")  // Debug
+                                liveScannerCoord = c
+                            }
+                        )
+                        .onAppear {
+                            print("LiveScanner view appeared")
+                        }
+                        .overlay(
+                            LiveOverlayView(numbers: scanVM.liveNumbers)
+                                .allowsHitTesting(false)
+                        )
+                    }
+                } else {
+                    Text("Live OCR requires iOS 17 or later.")
+                }
+            }
+            // MARK: - Cropper
+            .fullScreenCover(isPresented: $navVM.isShowingCropper) {
+                if let uiImage = scanVM.pickedImage {
+                    NavigationStack {
+                        ImageCropperView(image: uiImage) { cropImage, obs, fixes in
+                            scanVM.handleCroppedNumbers(obs.map(\.value), fixes: fixes)
+                            scanVM.receiveCroppedResult(image: cropImage, observations: obs)
+                            navVM.isShowingCropper = false
+                            navVM.isShowingResult  = true
+                        }
+                        .navigationBarTitleDisplayMode(.inline)
+                    }
+                }
+            }
+            // MARK: - Cropped result
+            .fullScreenCover(isPresented: $navVM.isShowingResult) {
+                if let img = scanVM.croppedImage,
+                   let obs = scanVM.croppedObservations {
+                    CroppedResultView(image: img, observations: obs)
+                        .onTapGesture { navVM.isShowingResult = false }
+                }
+            }
+            // MARK: - Fix-digit sheet
+            .sheet(isPresented: $scanVM.isShowingFixSheet) {
+                FixDigitSheet(fixes: $scanVM.pendingFixes) {
+                    scanVM.finishFixes()
+                }
+            }
+            // MARK: - Sum alert
+            .alert("Total", isPresented: $scanVM.showSumAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(scanVM.lastSum, format: .number)
+            }
+        }
+    }
+
     // MARK: - Body
     var body: some View {
         Group {
             if !isReady {
                 ProgressView()
                     .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            isReady = true
+                        Task {
+                            await requestCameraPermission()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                isReady = true
+                            }
                         }
                     }
             } else {
-                // Main content
-                Group {
-                    if hSize == .compact {
-                        NavigationStack {
-                            masterList
-                                .navigationTitle("History")
-                                .navigationBarTitleDisplayMode(.inline)
-                                .toolbar {
-                                    RootToolbar(
-                                        showScanner: $navVM.isShowingScanner,
-                                        showPhotoPicker: $navVM.isShowingPhotoPicker,
-                                        showLiveScanner: $navVM.isShowingLiveScanner,
-                                        numberSystem: $scanVM.storedSystem,
-                                        onStartLiveScan: scanVM.startLiveScan
-                                    )
-                                }
-                        }
-                    } else {
-                        NavigationSplitView {
-                            masterList
-                                .navigationTitle("History")
-                        } detail: {
-                            detailPane
-                        }
-                        .toolbar(content: {
-                            RootToolbar(
-                                showScanner: $navVM.isShowingScanner,
-                                showPhotoPicker: $navVM.isShowingPhotoPicker,
-                                showLiveScanner: $navVM.isShowingLiveScanner,
-                                numberSystem: $scanVM.storedSystem,
-                                onStartLiveScan: scanVM.startLiveScan
-                            )
-                        })
-                    }
-                }
-                // MARK: - Document scanner
-                .sheet(isPresented: $navVM.isShowingScanner) {
-                    DocumentScannerView { nums in
-                        scanVM.handleScanCompleted(nums)
-                    }
-                }
-                // MARK: - Photo picker
-                .fullScreenCover(isPresented: $navVM.isShowingPhotoPicker) {
-                    NavigationStack {
-                        PhotoPickerView { img in
-                            scanVM.handlePickedImage(img)
-                            navVM.isShowingPhotoPicker = false
-                            navVM.isShowingCropper     = true
-                        }
-                        .navigationTitle("Choose a Photo")
-                        .navigationBarTitleDisplayMode(.inline)
-                    }
-                }
-                // MARK: - Live OCR
-                .fullScreenCover(isPresented: $navVM.isShowingLiveScanner) {
-                    if #available(iOS 17.0, *) {
-                        NavigationStack {
-                            LiveScannerView(
-                                numberSystem:    $scanVM.storedSystem,
-                                onNumbersUpdate: { nums in
-                                    scanVM.liveNumbers = nums
-                                },
-                                highlights:      $liveHighlights,
-                                highlightConfs:  $liveConfs,
-                                cropRect:        $liveCrop,
-                                onFixTap: { fix in
-                                    scanVM.currentFix = fix
-                                },
-                                onCoordinatorReady: { c in
-                                    liveScannerCoord = c
-                                }
-                            )
-                            .overlay(
-                                LiveOverlayView(numbers: scanVM.liveNumbers)
-                                    .allowsHitTesting(false)
-                            )
-                            .overlay(
-                                LiveHighlightOverlay(rects: liveHighlights,
-                                                     rectConfs: liveConfs,
-                                                     onTap: { idx in
-                                                         liveScannerCoord?.requestFix(at: idx)
-                                                     })
-                            )
-                            .overlay {
-                                if let _ = liveCrop { LiveCropOverlay(crop: $liveCrop) }
-                                LiveFixPopover(candidate: $scanVM.currentFix)
-                                    .environmentObject(scanVM)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity,
-                                           alignment: .center)
-                            }
-                            .ignoresSafeArea()
-                            .toolbar {
-                                ToolbarItem(placement: .cancellationAction) {
-                                    Button("Done") {
-                                        navVM.isShowingLiveScanner = false
-                                        liveCrop = nil
-                                    }
-                                }
-                                ToolbarItem(placement: .navigationBarTrailing) {
-                                    Button {
-                                        liveCrop = nil
-                                    } label: {
-                                        Image(systemName: liveCrop == nil
-                                              ? "scissors"
-                                              : "scissors.badge.minus")
-                                    }
-                                    .accessibilityLabel("Clear crop")
-                                }
-                            }
-                        }
-                    } else {
-                        Text("Live OCR requires iOS 17 or later.")
-                    }
-                }
-                // MARK: - Cropper
-                .fullScreenCover(isPresented: $navVM.isShowingCropper) {
-                    if let uiImage = scanVM.pickedImage {
-                        NavigationStack {
-                            ImageCropperView(image: uiImage) { cropImage, obs, fixes in
-                                scanVM.handleCroppedNumbers(obs.map(\.value), fixes: fixes)
-                                scanVM.receiveCroppedResult(image: cropImage, observations: obs)
-                                navVM.isShowingCropper = false
-                                navVM.isShowingResult  = true
-                            }
-                            .navigationBarTitleDisplayMode(.inline)
-                        }
-                    }
-                }
-                // MARK: - Cropped result
-                .fullScreenCover(isPresented: $navVM.isShowingResult) {
-                    if let img = scanVM.croppedImage,
-                       let obs = scanVM.croppedObservations {
-                        CroppedResultView(image: img, observations: obs)
-                            .onTapGesture { navVM.isShowingResult = false }
-                    }
-                }
-                // MARK: - Fix-digit sheet (static scans only)
-                .sheet(
-                    isPresented: Binding(
-                        get: { scanVM.isShowingFixSheet && !navVM.isShowingLiveScanner },
-                        set: { scanVM.isShowingFixSheet = $0 }
-                    )
-                ) {
-                    FixDigitSheet(fixes: $scanVM.pendingFixes) {
-                        scanVM.finishFixes()
-                    }
-                }
-                // MARK: - Sum alert
-                .alert("Total", isPresented: $scanVM.showSumAlert) {
-                    Button("OK", role: .cancel) { }
-                } message: {
-                    Text(scanVM.lastSum, format: .number)
-                }
+                MainContentView(
+                    navVM: navVM,
+                    scanVM: scanVM,
+                    masterList: AnyView(masterList),
+                    detailPane: AnyView(detailPane),
+                    liveCrop: $liveCrop,
+                    liveHighlights: $liveHighlights,
+                    liveConfs: $liveConfs,
+                    liveScannerCoord: $liveScannerCoord
+                )
             }
         }
         .overlay {
@@ -250,6 +319,26 @@ struct ContentView: View {
                 progress: scanVM.processingState.progress,
                 isVisible: scanVM.processingState.isProcessing
             )
+        }
+    }
+
+    @MainActor
+    private func requestCameraPermission() async {
+        print("Checking camera permission...")
+        // Check camera permission
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .notDetermined:
+            print("Camera permission not determined, requesting...")
+            let granted = await AVCaptureDevice.requestAccess(for: .video)
+            print("Camera permission \(granted ? "granted" : "denied")")
+        case .authorized:
+            print("Camera permission already granted")
+        case .denied:
+            print("Camera permission denied")
+        case .restricted:
+            print("Camera permission restricted")
+        @unknown default:
+            print("Unknown camera permission status")
         }
     }
 

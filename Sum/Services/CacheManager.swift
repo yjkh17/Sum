@@ -110,6 +110,35 @@ final class CacheManager {
             }
         }
     }
+    
+    struct BatchOperation {
+        let key: String
+        let image: UIImage
+        let quality: ImageProcessingQuality
+        let completion: ((UIImage?) -> Void)?
+    }
+    
+    func processBatchOperations(_ operations: [BatchOperation]) {
+        let batchSize = 5
+        let chunks = operations.chunked(into: batchSize)
+        
+        for chunk in chunks {
+            queue.async { [weak self] in
+                autoreleasepool {
+                    for operation in chunk {
+                        let optimized = try? operation.image.optimized(quality: operation.quality)
+                        if let optimized {
+                            self?.cacheImage(optimized, forKey: operation.key)
+                            
+                            DispatchQueue.main.async {
+                                operation.completion?(optimized)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Helpers

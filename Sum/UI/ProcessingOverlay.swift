@@ -23,6 +23,7 @@ struct ProcessingOverlay: View {
                         Text("\(Int(progress * 100))%")
                             .font(.subheadline)
                             .foregroundColor(.white)
+                            .contentTransition(.numericText())
                     }
                     .padding()
                     .background(.ultraThinMaterial)
@@ -32,5 +33,6 @@ struct ProcessingOverlay: View {
             }
         }
         .animation(.easeInOut, value: isVisible)
+        .animation(.easeInOut, value: progress)
     }
 }

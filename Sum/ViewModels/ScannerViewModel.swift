@@ -52,14 +52,20 @@ final class ScannerViewModel: ObservableObject {
     private let previewQuality: ImageProcessingQuality = .medium
     private let archiveQuality: ImageProcessingQuality = .high
     
-    private let croppedCache = NSCache<NSString, UIImage>()
+    private static let croppedCache = NSCache<NSString, UIImage>()
     
+    private static let cacheConfig: Void = {
+        ScannerViewModel.croppedCache.totalCostLimit = 50 * 1024 * 1024  // 50MB limit
+        ScannerViewModel.croppedCache.countLimit = 100 // Max 100 items
+    }()
+
     private func cacheImage(_ image: UIImage, withKey key: String) {
-        croppedCache.setObject(image, forKey: key as NSString)
+        let cost = Int(image.size.width * image.size.height * 4)  // Approx bytes
+        Self.croppedCache.setObject(image, forKey: key as NSString, cost: cost)
     }
     
     private func getCachedImage(forKey key: String) -> UIImage? {
-        return croppedCache.object(forKey: key as NSString)
+        return Self.croppedCache.object(forKey: key as NSString)
     }
     
     /// استدعاء من DocumentScannerView عند اكتمال المسح
@@ -83,33 +89,27 @@ final class ScannerViewModel: ObservableObject {
         
         Task { @MainActor in
             AppStateManager.shared.beginBackgroundTask()
-            defer { 
+            defer {
                 AppStateManager.shared.endBackgroundTask()
                 processingState = .idle
             }
             
             processingState = .processing(progress: 0)
+            photoNumbers = nums
+            updateProgress(0.3)
             
-            do {
-                photoNumbers = nums
-                updateProgress(0.3)
+            if !fixes.isEmpty {
+                let fixImages = fixes.map { (UIImage(cgImage: $0.image), UUID().uuidString) }
+                processBatchImages(fixImages)
                 
-                if !fixes.isEmpty {
-                    let fixImages = fixes.map { ($0.image, UUID().uuidString) }
-                    processBatchImages(fixImages.map { (UIImage(cgImage: $0.0), $0.1) })
-                    
-                    _pendingFixes = fixes
-                    if !isShowingFixSheet {
-                        isShowingFixSheet = true
-                    }
+                _pendingFixes = fixes
+                if !isShowingFixSheet {
+                    isShowingFixSheet = true
                 }
-                updateProgress(0.7)
-                recalcTotals()
-                updateProgress(1.0)
-            } catch {
-                processingState = .error(error.localizedDescription)
-                AppStateManager.shared.handleError(error)
             }
+            updateProgress(0.7)
+            recalcTotals()
+            updateProgress(1.0)
         }
     }
 
@@ -123,15 +123,17 @@ final class ScannerViewModel: ObservableObject {
     // New helper to accept obs + image from cropper
     func receiveCroppedResult(image: UIImage, observations: [NumberObservation]) {
         // Use preview quality for UI
-        _croppedImage = image.optimized(quality: previewQuality)
-        _croppedObservations = observations
-        showSumAlert = false
-        isShowingResult = true
-        
-        // Archive with higher quality in background
-        if let context = modelContext {
-            Task.detached(priority: .background) { [weak self] in
-                await self?.persistRecord(image: image, in: context)
+        if let croppedImage = try? image.optimized(quality: previewQuality) {
+            _croppedImage = croppedImage
+            _croppedObservations = observations
+            showSumAlert = false
+            isShowingResult = true
+            
+            // Archive with higher quality in background
+            if let context = modelContext {
+                Task.detached(priority: .background) { [weak self] in
+                    await self?.persistRecord(image: image, in: context)
+                }
             }
         }
     }
@@ -143,12 +145,63 @@ final class ScannerViewModel: ObservableObject {
         rec.numbers = numbers
         
         // Save high quality version for archive
-        let archiveImage = image.optimized(quality: archiveQuality)
-        if let url = try? saveImage(archiveImage) {
+        if let archiveImage = try? image.optimized(quality: archiveQuality),
+           let url = try? saveImage(archiveImage) {
             rec.imagePath = url.lastPathComponent
         }
         
         context.insert(rec)
+    }
+
+    private func saveImage(_ img: UIImage) throws -> URL {
+        let fileName = UUID().uuidString + ".jpg"
+        let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let url = docs.appendingPathComponent(fileName)
+        
+        // Save to memory cache
+        cacheImage(img, withKey: fileName)
+        
+        // Save to disk cache for persistence
+        CacheManager.shared.cacheImage(img, forKey: fileName)
+        
+        // Optimize image before saving
+        let optimizedImage = (try? img
+            .withFixedOrientation()
+            .optimized(quality: .medium)) ?? img
+        
+        // Save to disk
+        guard let data = optimizedImage.jpegData(compressionQuality: imageCompressionQuality) else {
+            throw AppStateManager.AppError.processingFailed("Failed to create JPEG data")
+        }
+        try data.write(to: url, options: .atomicWrite)
+        return url
+    }
+
+    private func loadImage(_ name: String) -> UIImage? {
+        // Try memory cache first
+        if let cached = getCachedImage(forKey: name) {
+            return cached
+        }
+        
+        // Try disk cache
+        if let cached = CacheManager.shared.getImage(forKey: name) {
+            // Add to memory cache
+            cacheImage(cached, withKey: name)
+            return cached
+        }
+        
+        // Load from disk
+        let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let url = docs.appendingPathComponent(name)
+        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
+        
+        // Cache for next time
+        if let optimized = try? image.optimized(quality: previewQuality) {
+            cacheImage(optimized, withKey: name)
+            CacheManager.shared.cacheImage(optimized, forKey: name)
+            return optimized
+        }
+        return image
     }
 
     /// Recompute totals when any source updates
@@ -185,6 +238,13 @@ final class ScannerViewModel: ObservableObject {
             liveNumbers.append(new)         // add if old not found / nil
         }
         liveSum = liveNumbers.reduce(0, +)  // refresh running total shown in overlay
+    }
+
+    func handleLiveNumbersUpdate(_ numbers: [Double]) {
+        autoreleasepool {
+            liveNumbers = numbers
+            liveSum = numbers.reduce(0, +)
+        }
     }
 
     // MARK: - Persistence
@@ -246,7 +306,7 @@ final class ScannerViewModel: ObservableObject {
         processingTask = Task { @MainActor in
             do {
                 appState.beginBackgroundTask()
-                defer { 
+                defer {
                     appState.endBackgroundTask()
                     if case .processing = processingState {
                         processingState = .idle
@@ -255,7 +315,7 @@ final class ScannerViewModel: ObservableObject {
                 
                 processingState = .processing(progress: 0)
                 
-                let optimizedImage = image.optimized(quality: .medium)
+                let optimizedImage = try image.optimized(quality: .medium)
                 updateProgress(0.3)
                 
                 try await withCheckedThrowingContinuation { [weak self] (continuation: CheckedContinuation<Void, Error>) in
@@ -275,7 +335,7 @@ final class ScannerViewModel: ObservableObject {
                                 }
                                 
                                 self.updateProgress(0.7)
-                                try await self.processOptimizedImage(optimizedImage)
+                                let _ = try await self.processOptimizedImage(optimizedImage)
                                 self.updateProgress(1.0)
                                 continuation.resume()
                             } catch {
@@ -296,24 +356,23 @@ final class ScannerViewModel: ObservableObject {
     }
     
     @MainActor
-    private func processOptimizedImage(_ image: UIImage) async throws {
+    private func processOptimizedImage(_ image: UIImage) async throws -> UIImage {
         guard !Task.isCancelled else {
             throw AppStateManager.AppError.taskCancelled
         }
         
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UIImage, Error>) in
             let operation = BlockOperation { @Sendable in
                 autoreleasepool {
                     do {
-                        // Example processing that could throw
                         if image.size.width < 1 || image.size.height < 1 {
                             continuation.resume(throwing: AppStateManager.AppError.processingFailed("Invalid image dimensions"))
                             return
                         }
                         
                         // Process image in autorelease pool to manage memory
-                        _ = image.optimized(quality: .medium)
-                        continuation.resume()
+                        let optimized = try image.optimized(quality: .medium)
+                        continuation.resume(returning: optimized)
                         
                     } catch {
                         continuation.resume(throwing: error)
@@ -344,49 +403,54 @@ final class ScannerViewModel: ObservableObject {
         processingState = .processing(progress: 0)
         
         let totalCount = Double(images.count)
-        var processedCount = 0
+        let processedCount = Atomic(0)
         
-        let operations = images.map { (image, id) in
-            CacheManager.BatchOperation(
-                key: id,
-                image: image,
-                quality: .medium
-            ) { [weak self] optimized in
-                guard let self = self else { return }
-                
-                processedCount += 1
-                
-                Task { @MainActor in
-                    // Update progress
-                    self.updateProgress(Double(processedCount) / totalCount)
-                    
-                    // Update UI with optimized image
-                    if let optimized = optimized {
-                        self.updateProcessedImage(optimized, forId: id)
-                    }
-                    
-                    // Check if all processing is complete
-                    if processedCount == images.count {
-                        self.processingState = .idle
-                        self.finishProcessing()
-                    }
-                }
-            }
+        let chunkSize = 5
+        let chunks = stride(from: 0, through: images.count - 1, by: chunkSize).map {
+            Array(images[($0)..<min($0 + chunkSize, images.count)])
         }
         
+        for chunk in chunks {
+            autoreleasepool {
+                let operations = chunk.map { (image, id) in
+                    CacheManager.BatchOperation(
+                        key: id,
+                        image: image,
+                        quality: .medium
+                    ) { [weak self] optimized in
+                        guard let self = self else { return }
+                        
+                        let current = processedCount.increment()
+                        
+                        Task { @MainActor in
+                            self.updateProgress(Double(current) / totalCount)
+                            
+                            if let optimized = optimized {
+                                self.updateProcessedImage(optimized, forId: id)
+                            }
+                            
+                            if current == images.count {
+                                self.processingState = .idle
+                                self.finishProcessing()
+                            }
+                        }
+                    }
+                }
+                CacheManager.shared.processBatchOperations(operations)
+            }
+        }
         AppStateManager.shared.beginBackgroundTask()
-        CacheManager.shared.processBatchOperations(operations)
     }
     
     private func updateProcessedImage(_ image: UIImage, forId id: String) {
-        // Update cached image
-        if let croppedImage = image.compress(maxSize: 512 * 1024) {
-            _croppedImage = croppedImage
-        }
-        
-        // Trigger UI update if needed
-        withAnimation {
-            isShowingResult = true
+        autoreleasepool {
+            if let croppedImage = try? image.optimized(quality: .medium) {
+                _croppedImage = croppedImage
+            }
+            
+            withAnimation {
+                isShowingResult = true
+            }
         }
     }
     
@@ -418,7 +482,7 @@ final class ScannerViewModel: ObservableObject {
         pickedImage = nil
         
         // Clear image cache
-        croppedCache.removeAllObjects()
+        Self.croppedCache.removeAllObjects()
     }
     
     // MARK: - Task Management
@@ -442,52 +506,20 @@ final class ScannerViewModel: ObservableObject {
     private let imageCompressionQuality: CGFloat = 0.8
     private lazy var fileManager: FileManager = .default
 
-    private func saveImage(_ img: UIImage) throws -> URL {
-        let fileName = UUID().uuidString + ".jpg"
-        let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let url = docs.appendingPathComponent(fileName)
+    private final class Atomic<T: Numeric> {
+        private let lock = NSLock()
+        private var value: T
         
-        // Save to memory cache
-        cacheImage(img, withKey: fileName)
-        
-        // Save to disk cache for persistence
-        CacheManager.shared.cacheImage(img, forKey: fileName)
-        
-        // Optimize image before saving
-        let optimizedImage = img
-            .withFixedOrientation()
-            .compress(maxSize: 512 * 1024) ?? img
-        
-        // Save to disk
-        try optimizedImage.jpegData(compressionQuality: imageCompressionQuality)?
-            .write(to: url, options: .atomic)
-        return url
-    }
-    
-    private func loadImage(_ name: String) -> UIImage? {
-        // Try memory cache first
-        if let cached = getCachedImage(forKey: name) {
-            return cached
+        init(_ value: T) {
+            self.value = value
         }
         
-        // Try disk cache
-        if let cached = CacheManager.shared.getImage(forKey: name) {
-            // Add to memory cache
-            cacheImage(cached, withKey: name)
-            return cached
+        func increment() -> T {
+            lock.lock()
+            defer { lock.unlock() }
+            value += 1
+            return value
         }
-        
-        // Load from disk
-        let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let url = docs.appendingPathComponent(name)
-        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
-        
-        // Cache for next time
-        let optimized = image.optimized(quality: previewQuality)
-        cacheImage(optimized, withKey: name)
-        CacheManager.shared.cacheImage(optimized, forKey: name)
-        
-        return optimized
     }
 
     init() {
@@ -510,6 +542,6 @@ final class ScannerViewModel: ObservableObject {
         Task { @MainActor in
             AppStateManager.shared.cancelAllTasks()
         }
-        croppedCache.removeAllObjects()
+        Self.croppedCache.removeAllObjects()
     }
 }

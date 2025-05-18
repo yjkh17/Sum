@@ -3,11 +3,11 @@ import UIKit
 enum ImageProcessingQuality {
     case low, medium, high
     
-    var compressionQuality: CGFloat {
+    var quality: CGFloat {
         switch self {
-        case .low: return 0.5
-        case .medium: return 0.7
-        case .high: return 0.9
+        case .low: return 0.3
+        case .medium: return 0.5
+        case .high: return 0.7
         }
     }
     
@@ -21,10 +21,12 @@ enum ImageProcessingQuality {
 }
 
 extension UIImage {
-    func optimized(quality: ImageProcessingQuality = .medium) -> UIImage {
-        let optimized = self
+    func optimized(quality: ImageProcessingQuality = .medium) throws -> UIImage {
+        guard let optimized = self
             .withFixedOrientation()
-            .compress(maxSize: quality.maxSize) ?? self
+            .compress(maxSize: quality.maxSize) else {
+            throw AppStateManager.AppError.processingFailed("Failed to optimize image")
+        }
         
         return optimized
     }

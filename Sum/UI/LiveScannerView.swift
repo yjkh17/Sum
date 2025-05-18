@@ -1,6 +1,8 @@
 import SwiftUI
 import VisionKit
 import Vision
+import QuartzCore  // Add this for CACurrentMediaTime
+import RegexBuilder
 
 @available(iOS 17.0, *)
 struct LiveScannerView: UIViewControllerRepresentable {
@@ -19,203 +21,313 @@ struct LiveScannerView: UIViewControllerRepresentable {
     var onCoordinatorReady: (Coordinator) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
+        print("Making coordinator") // Debug
         let c = Coordinator(parent: self,
-                            highlights:     $highlights,
+                            highlights: $highlights,
                             highlightConfs: $highlightConfs,
-                            onFixTap:       onFixTap)
-        DispatchQueue.main.async { onCoordinatorReady(c) }
+                            onFixTap: onFixTap)
+        print("Coordinator created") // Debug
+        DispatchQueue.main.async { 
+            print("Calling onCoordinatorReady") // Debug
+            onCoordinatorReady(c)
+        }
         return c
     }
 
     func makeUIViewController(context: Context) -> DataScannerViewController {
+        print("\n=== LiveScanner Setup ===")
+        print("DataScanner supported: \(DataScannerViewController.isSupported)") // Debug
+        print("DataScanner available: \(DataScannerViewController.isAvailable)") // Debug
+        
+        guard DataScannerViewController.isSupported else {
+            print("❌ DataScanner not supported!") // Debug
+            fatalError("DataScanner is not supported on this device")
+        }
+
+        guard DataScannerViewController.isAvailable else {
+            print("❌ DataScanner not available!") // Debug
+            fatalError("DataScanner is not available right now")
+        }
+
+        print("✅ Creating DataScannerViewController") // Debug
+        
         let scanner = DataScannerViewController(
-            recognizedDataTypes: [.text()],
+            recognizedDataTypes: [.text()],          // generic text
             qualityLevel: .balanced,
             recognizesMultipleItems: true,
-            isHighFrameRateTrackingEnabled: false,
+            isHighFrameRateTrackingEnabled: false,   // safer for Metal
+            isGuidanceEnabled: false,
             isHighlightingEnabled: true
         )
+        
         scanner.delegate = context.coordinator
-        try? scanner.startScanning()
+        
+        // Start scanning with error handling
+        do {
+            print("Starting scanner...") // Debug
+            try scanner.startScanning()
+            print("Scanner started successfully") // Debug
+        } catch {
+            print("Failed to start scanning: \(error.localizedDescription)") // Debug
+        }
+        
         return scanner
     }
 
     func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {
-        context.coordinator.system   = numberSystem
-        context.coordinator.cropRect = cropRect     // refresh every frame
+        // Only update if the system has actually changed to avoid unnecessary reconfigurations
+        if context.coordinator.system != numberSystem {
+            print("Updating scanner system from \(context.coordinator.system) to \(numberSystem)") // Debug
+            context.coordinator.system = numberSystem
+        }
+        // cropRect is already a binding and its changes are handled within the coordinator if necessary,
+        // or by DataScannerViewController's regionOfInterest if that's how it's used.
+        // For now, let's minimize updates here.
+        // context.coordinator.cropRect = cropRect
     }
 
+    @MainActor
     final class Coordinator: NSObject, DataScannerViewControllerDelegate {
         let parent: LiveScannerView
-        /// Last set of numbers sent to the view-model — used to avoid
-        /// spamming the delegate with identical updates every frame.
         private var lastSet: Set<Double> = []
-        // النظام الحالى يُعاد ضبطه في didSet لتحديث الـ regex
-        var system: NumberSystem { didSet { regex = Self.regex(for: system) } }
-        // current crop (unit space) – nil → whole image
+        var system: NumberSystem
         var cropRect: CGRect? = nil
         private let highlights: Binding<[CGRect]>
         private let highlightConfs: Binding<[Float]>
         private let onFixTap: (FixCandidate) -> Void
         private weak var scannerVC: DataScannerViewController?
-        // ---------------------------------------------
         private var tapFixes: [(rect: CGRect, value: Double, conf: Float)] = []
-        private static var currentSystem: NumberSystem = .western
-
+        
+        // Frame timing
+        private var lastProcessedTime: CFTimeInterval = 0
+        private var lastUpdateTime: CFTimeInterval = 0
+        private let frameInterval: CFTimeInterval = 1.0 / 30.0  // Target 30fps
+        private let updateInterval: CFTimeInterval = 0.1        // Update UI at 10Hz
+        
         init(parent: LiveScannerView,
-             highlights:     Binding<[CGRect]>,
+             highlights: Binding<[CGRect]>,
              highlightConfs: Binding<[Float]>,
-             onFixTap:       @escaping (FixCandidate) -> Void)
+             onFixTap: @escaping (FixCandidate) -> Void)
         {
-            self.parent          = parent
-            self.system          = parent.numberSystem
-            self.regex           = Self.regex(for: system)
-            self.highlights      = highlights
-            self.highlightConfs  = highlightConfs
-            self.onFixTap        = onFixTap
-            Coordinator.currentSystem = system
+            self.parent = parent
+            self.system = parent.numberSystem
+            self.highlights = highlights
+            self.highlightConfs = highlightConfs
+            self.onFixTap = onFixTap
+            super.init()
         }
-
+        
         func dataScanner(_ scanner: DataScannerViewController,
                          didAdd added: [RecognizedItem],
                          allItems: [RecognizedItem]) {
-            scannerVC = scanner
-            extractNumbers(from: allItems, in: scanner)
+            print("\n➡️ SCANNER: DID_ADD \(added.count) items. Total: \(allItems.count)") // Enhanced log
+            for item in added {
+                if case let .text(textItem) = item {
+                    print("   📄 Added Text: '\(textItem.transcript)' at \(textItem.bounds)")
+                } else if case let .barcode(barcodeItem) = item {
+                    print("   ║▌║ Added Barcode: \(barcodeItem.payloadStringValue ?? "N/A")")
+                }
+            }
+            processItems(allItems, from: "didAdd", in: scanner)
+        }
+
+        func dataScanner(_ scanner: DataScannerViewController,
+                         didUpdate updated: [RecognizedItem],
+                         allItems: [RecognizedItem]) {
+            print("\n➡️ SCANNER: DID_UPDATE \(updated.count) items. Total: \(allItems.count)") // Enhanced log
+             for item in updated {
+                if case let .text(textItem) = item {
+                    print("   📄 Updated Text: '\(textItem.transcript)' at \(textItem.bounds)")
+                } else if case let .barcode(barcodeItem) = item {
+                    print("   ║▌║ Updated Barcode: \(barcodeItem.payloadStringValue ?? "N/A")")
+                }
+            }
+            processItems(allItems, from: "didUpdate", in: scanner)
         }
 
         func dataScanner(_ scanner: DataScannerViewController,
                          didRemove removed: [RecognizedItem],
                          allItems: [RecognizedItem]) {
-            scannerVC = scanner
-            extractNumbers(from: allItems, in: scanner)
+            print("\n➡️ SCANNER: DID_REMOVE \(removed.count) items. Total: \(allItems.count)") // Enhanced log
+            for item in removed {
+                if case let .text(textItem) = item {
+                    print("   📄 Removed Text: '\(textItem.transcript)'")
+                }
+            }
+            processItems(allItems, from: "didRemove", in: scanner)
+        }
+        
+        // Helper to reduce redundancy
+        private func processItems(_ items: [RecognizedItem], from source: String, in scannerVC: DataScannerViewController) {
+            let now = CACurrentMediaTime()
+            // Store reference to the current scanner view‑controller (needed by requestFix)
+            self.scannerVC = scannerVC
+            guard now - lastProcessedTime >= frameInterval else {
+                // print("Skipping frame for \(source)") // Optional: log frame skips
+                return
+            }
+            lastProcessedTime = now
+            // Reset collected tap‑to‑fix rects for this frame
+            tapFixes.removeAll()
+            autoreleasepool {
+                extractNumbers(from: items, in: scannerVC)
+            }
         }
 
-        // Cache two compiled regexes, switch instantly on system change
-        private static let westR: Regex<Substring> =
-            try! Regex(#"[0-9]+(?:\.[0-9]+)?"#)
-        private static let eastR: Regex<Substring> =
-            try! Regex(#"[٠-٩۰-۹]+(?:\.[٠-٩۰-۹]+)?"#)
-        private static func regex(for sys: NumberSystem) -> Regex<Substring> {
-            sys == .western ? westR : eastR
-        }
-        private var regex: Regex<Substring>
-
-        // MARK: - Core extractor
         private func extractNumbers(from items: [RecognizedItem],
                                     in scanner: DataScannerViewController) {
-            var current: Set<Double> = []
-            var rects  : [CGRect] = []
-            var confs  : [Float]  = []
-
-            tapFixes.removeAll()
-
+            print("\n=== Processing Items ===")
+            print("Items count: \(items.count)")
+            
+            var current = Set<Double>()
+            var rects = [CGRect]()
+            var confs = [Float]()
+            
+            let hostSize = scanner.view?.bounds.size ?? .zero
+            print("Host size: \(hostSize)")
+            
+            // Process items
             for item in items {
-                guard case let .text(textItem) = item else { continue }
-                let str = textItem.transcript
-
-                // --- احسب مستطيل العنصر فى فضاء 0‥1 دائماً ---
-                guard let host = scanner.view else { continue }
-                let q = item.bounds
-                let minX = min(q.topLeft.x,  q.bottomLeft.x,
-                               q.topRight.x, q.bottomRight.x)
-                let maxX = max(q.topLeft.x,  q.bottomLeft.x,
-                               q.topRight.x, q.bottomRight.x)
-                let minY = min(q.topLeft.y,  q.topRight.y,
-                               q.bottomLeft.y, q.bottomRight.y)
-                let maxY = max(q.topLeft.y,  q.topRight.y,
-                               q.bottomLeft.y, q.bottomRight.y)
-                let boxInView = CGRect(x: minX, y: minY,
-                                       width:  maxX - minX,
-                                       height: maxY - minY)
-                let sz   = host.bounds.size
-                let norm = CGRect(x: boxInView.minX / sz.width,
-                                  y: boxInView.minY / sz.height,
-                                  width : boxInView.width  / sz.width,
-                                  height: boxInView.height / sz.height)
-
-                // ✦ فلتر بالقصّ إن وُجد
-                if let crop = cropRect, !crop.intersects(norm) { continue }
-
-                // ✦ تجاهل السطور الطويلة
-                guard str.count < 40 else { continue }
-
-                // ✦ مطابقة الأرقام
-                for m in str.matches(of: regex) {
-                    let slice   = String(str[m.range])
-                    let cleaned = system == .western
-                        ? slice
-                        : TextScannerService.normalize(slice)
-                    if let v = Double(cleaned) {
-                        current.insert(v)
-                        rects.append(norm)
-                        let finalConf: Float = str.count <= 2 ? 0.8
-                                          : (str.count <= 5 ? 0.6 : 0.4)
-                        confs.append(finalConf)
-                        tapFixes.append((rect: norm, value: v, conf: finalConf))
+                if case let .text(textItem) = item {
+                    print("\nProcessing text: '\(textItem.transcript)'")
+                    
+                    // Split multi-line text and process each line
+                    let lines = textItem.transcript.components(separatedBy: .newlines)
+                    for line in lines {
+                        let str = line.trimmingCharacters(in: .whitespaces)
+                        
+                        // Skip empty lines
+                        guard !str.isEmpty else { continue }
+                        
+                        // Match numbers based on current system
+                        let matches = str.matches(of: system == .western ? 
+                            try! Regex(#"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"#) :
+                            try! Regex(#"(?:(?:[٠-٩۰-۹]{1,3}(?:,[٠-٩۰-۹]{3})+|[٠-٩۰-۹]+)(?:\.[٠-٩۰-۹]+)?)"#)
+                        )
+                        
+                        for match in matches {
+                            var raw = String(str[match.range])
+                                .replacingOccurrences(of: ",", with: "")
+                            print("Processing match: '\(raw)'")
+                            
+                            if system == .eastern {
+                                raw = TextScannerService.normalize(raw)
+                            }
+                            
+                            if let value = Double(raw) {
+                                // Validate number
+                                guard value != 0,
+                                      value > -999999,
+                                      value < 999999,
+                                      !value.isInfinite,
+                                      !value.isNaN else {
+                                    print("❌ Failed validation")
+                                    continue
+                                }
+                                
+                                print("✅ Found valid number: \(value)")
+                                
+                                // Calculate rect
+                                let bounds = textItem.bounds
+                                var rect = CGRect(
+                                    x: bounds.topLeft.x * hostSize.width,
+                                    y: bounds.topLeft.y * hostSize.height,
+                                    width: (bounds.topRight.x - bounds.topLeft.x) * hostSize.width,
+                                    height: (bounds.bottomLeft.y - bounds.topLeft.y) * hostSize.height
+                                )
+                                
+                                // Add padding and ensure minimum size
+                                let minSize: CGFloat = 50
+                                let padding: CGFloat = 20
+                                
+                                rect = rect.insetBy(dx: -padding, dy: -padding)
+                                
+                                if rect.width < minSize {
+                                    let expand = (minSize - rect.width) / 2
+                                    rect.origin.x -= expand
+                                    rect.size.width = minSize
+                                }
+                                if rect.height < minSize {
+                                    let expand = (minSize - rect.height) / 2
+                                    rect.origin.y -= expand
+                                    rect.size.height = minSize
+                                }
+                                
+                                // Clamp to view bounds
+                                rect.origin.x = max(0, min(rect.origin.x, hostSize.width - rect.width))
+                                rect.origin.y = max(0, min(rect.origin.y, hostSize.height - rect.height))
+                                
+                                rect = rect.integral
+                                
+                                // Calculate confidence
+                                let confidence: Float = str.count <= 2 ? 0.95
+                                                   : str.count <= 5 ? 0.85
+                                                   : 0.75
+                                
+                                current.insert(value)
+                                rects.append(rect)
+                                confs.append(confidence)
+                                tapFixes.append((rect: rect, value: value, conf: confidence))
+                            }
+                        }
                     }
                 }
             }
+            
+            // Throttle UI updates to 10 Hz and use updateInterval
+            let now = CACurrentMediaTime()
+            let hasChanged = current != lastSet
+            guard hasChanged || now - lastUpdateTime >= updateInterval else { return }
 
-            // Only emit if something actually changed
-            guard current != lastSet else { return }
             lastSet = current
-
-            // Stable order for UI
+            lastUpdateTime = now
             let nums = Array(current).sorted()
-            Task { @MainActor in
-                parent.onNumbersUpdate(nums)
-                highlights.wrappedValue     = rects
-                highlightConfs.wrappedValue = confs
-            }
-        }
 
-        private static func processMatch(_ match: Regex<Substring>.Match, in text: String, observation: VNRecognizedTextObservation, imageSize: CGSize) -> (value: Double, rect: CGRect)? {
-            var raw = String(text[match.range])
-                .replacingOccurrences(of: ",", with: "")
-            if currentSystem == .eastern {
-                raw = TextScannerService.normalize(raw)
+            Task { @MainActor in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    parent.onNumbersUpdate(nums)
+                    highlights.wrappedValue = rects
+                    highlightConfs.wrappedValue = confs
+                }
             }
-            guard let val = Double(raw) else { return nil }
-            
-            // Use corners for more accurate perspective
-            let topLeft = CGPoint(x: observation.topLeft.x * imageSize.width,
-                                y: (1 - observation.topLeft.y) * imageSize.height)
-            let topRight = CGPoint(x: observation.topRight.x * imageSize.width,
-                                 y: (1 - observation.topRight.y) * imageSize.height)
-            let bottomLeft = CGPoint(x: observation.bottomLeft.x * imageSize.width,
-                                   y: (1 - observation.bottomLeft.y) * imageSize.height)
-            let bottomRight = CGPoint(x: observation.bottomRight.x * imageSize.width,
-                                    y: (1 - observation.bottomRight.y) * imageSize.height)
-            
-            // Calculate bounding rect that encompasses all corners
-            let minX = min(topLeft.x, bottomLeft.x, topRight.x, bottomRight.x)
-            let maxX = max(topLeft.x, bottomLeft.x, topRight.x, bottomRight.x)
-            let minY = min(topLeft.y, bottomLeft.y, topRight.y, bottomRight.y)
-            let maxY = max(topLeft.y, bottomLeft.y, topRight.y, bottomRight.y)
-            
-            let rect = CGRect(x: minX, y: minY, 
-                             width: maxX - minX,
-                             height: maxY - minY)
-            
-            return (val, rect)
         }
 
         // MARK: - Tap-to-Fix
         func requestFix(at index: Int) {
             guard index < tapFixes.count,
                   let host = scannerVC?.view,
-                  let cg   = host.asImage()?.cgImage
-            else { return }
+                  let image = host.asImage(), // Get UIImage first
+                  let cg = image.cgImage       // Then get CGImage
+            else { 
+                print("❌ Error: Could not get host view or image for fix.")
+                return 
+            }
 
-            let info = tapFixes[index]
-            let px = CGRect(x: info.rect.minX * CGFloat(cg.width),
-                            y: info.rect.minY * CGFloat(cg.height),
-                            width:  info.rect.width  * CGFloat(cg.width),
-                            height: info.rect.height * CGFloat(cg.height)).integral
-            guard let sub = cg.cropping(to: px) else { return }
+            let info = tapFixes[index] // info.rect is in points
+            let imageScale = image.scale // Get the scale of the captured image (e.g., 1.0, 2.0, 3.0)
+
+            // Convert rect from points to pixels using the image's scale
+            let px = CGRect(
+                x: info.rect.minX * imageScale,
+                y: info.rect.minY * imageScale,
+                width: info.rect.width * imageScale,
+                height: info.rect.height * imageScale
+            ).integral // Make it integral for pixel boundaries
+
+            // Add a check for the size of px before cropping
+            // Vision requires dimensions to be > 2 pixels. Let's be a bit safer.
+            guard px.width > 4 && px.height > 4 else {
+                 print("❌ Error: Crop rectangle for fix is too small in pixels: \(px). Original point rect: \(info.rect)")
+                 return
+            }
+
+            guard let sub = cg.cropping(to: px) else {
+                print("❌ Error: Failed to crop image for fix. Pixel crop rect: \(px), CGImage size: \(cg.width)x\(cg.height)")
+                return
+            }
 
             let fix = FixCandidate(image: sub,
-                                   rect: info.rect,
+                                   rect: info.rect, // This rect is still in points, which is fine for FixCandidate UI
                                    suggested: Int(info.value),
                                    confidence: info.conf)
             Task { @MainActor in onFixTap(fix) }
