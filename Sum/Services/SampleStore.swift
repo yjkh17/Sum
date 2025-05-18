@@ -1,4 +1,5 @@
 import UIKit
+import CryptoKit
 
 /// Stores and manages corrected digit samples and caches recognition results
 final class SampleStore {
@@ -66,12 +67,9 @@ final class SampleStore {
     }
     
     private func generateImageKey(_ data: Data) -> String {
-        // Generate a deterministic hash for the image data
-        var hasher = Hasher()
-        data.withUnsafeBytes { buffer in
-            hasher.combine(bytes: buffer)
-        }
-        return String(hasher.finalize())
+        // Generate a reproducible SHA-256 hash of the image data
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 }
 
