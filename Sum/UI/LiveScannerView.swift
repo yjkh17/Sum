@@ -32,7 +32,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
             recognizesMultipleItems: true,
             isHighFrameRateTrackingEnabled: false,
             isGuidanceEnabled: false,
-            isHighlightingEnabled: true
+            // Disable built-in highlights so we can draw our own
+            isHighlightingEnabled: false
         )
 
         context.coordinator.scannerVC = scanner

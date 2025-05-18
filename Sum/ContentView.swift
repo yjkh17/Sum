@@ -243,6 +243,15 @@ struct ContentView: View {
                             print("LiveScanner view appeared")
                         }
                         .overlay(
+                            LiveHighlightOverlay(
+                                rects: liveHighlights,
+                                rectConfs: liveConfs,
+                                onTap: { idx in
+                                    liveScannerCoord?.requestFix(at: idx)
+                                }
+                            )
+                        )
+                        .overlay(
                             LiveOverlayView(numbers: scanVM.liveNumbers)
                                 .allowsHitTesting(false)
                         )
