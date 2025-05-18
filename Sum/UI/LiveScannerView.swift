@@ -63,7 +63,21 @@ struct LiveScannerView: UIViewControllerRepresentable {
         let parent: LiveScannerView
         private var lastSet: Set<Double> = []
         var system: NumberSystem
-        var cropRect: CGRect? = nil
+        var cropRect: CGRect? = nil {
+            didSet {
+                if cropRect != oldValue {
+                    lastCropRect = cropRect
+                    valueCounts.removeAll()
+                    valueData.removeAll()
+                    lastSet.removeAll()
+                    Task { @MainActor in
+                        highlights.wrappedValue.removeAll()
+                        highlightConfs.wrappedValue.removeAll()
+                        parent.onNumbersUpdate([])
+                    }
+                }
+            }
+        }
         private var lastCropRect: CGRect? = nil
         private let highlights: Binding<[CGRect]>
         private let highlightConfs: Binding<[Float]>
