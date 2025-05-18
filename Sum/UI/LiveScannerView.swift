@@ -25,7 +25,6 @@ struct LiveScannerView: UIViewControllerRepresentable {
         }
         return c
     }
-
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let scanner = DataScannerViewController(
             recognizedDataTypes: [.text()],
@@ -54,8 +53,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
             context.coordinator.system = numberSystem
         }
         // Propagate crop rectangle changes
-        if context.coordinator.activeCropRect != activeCropRect {
-            context.coordinator.activeCropRect = activeCropRect
+        if context.coordinator.cropRect != cropRect {
+            context.coordinator.cropRect = cropRect
         }
     }
 
@@ -64,7 +63,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
         let parent: LiveScannerView
         private var lastSet: Set<Double> = []
         var system: NumberSystem
-        var activeCropRect: CGRect? = nil
+        var cropRect: CGRect? = nil
+        private var lastCropRect: CGRect? = nil
         private let highlights: Binding<[CGRect]>
         private let highlightConfs: Binding<[Float]>
         private let onFixTap: (FixCandidate) -> Void
@@ -107,8 +107,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
             guard now - lastProcessedTime >= frameInterval else { return }
             lastProcessedTime = now
 
-            if activeCropRect != lastCropRect {
-                lastCropRect = activeCropRect
+            if cropRect != lastCropRect {
+                lastCropRect = cropRect
                 lastSet.removeAll()
                 valueCounts.removeAll()
                 valueData.removeAll()
@@ -122,7 +122,7 @@ struct LiveScannerView: UIViewControllerRepresentable {
             let hostSize = scanner.view?.bounds.size ?? .zero
 
             // Convert crop rect from unit space to pixel space for filtering
-            let cropPixelRect: CGRect? = activeCropRect.map { r in
+            let cropPixelRect: CGRect? = cropRect.map { r in
                 CGRect(x: r.minX * hostSize.width,
                        y: r.minY * hostSize.height,
                        width: r.width * hostSize.width,
