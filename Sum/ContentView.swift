@@ -230,7 +230,7 @@ struct ContentView: View {
                             },
                             highlights: $liveHighlights,
                             highlightConfs: $liveConfs,
-                            cropRect: $liveCrop,
+                            activeCropRect: $liveCrop,
                             onFixTap: { fix in
                                 scanVM.currentFix = fix
                             },
@@ -242,6 +242,9 @@ struct ContentView: View {
                         .onAppear {
                             print("LiveScanner view appeared")
                         }
+                        .overlay(
+                            LiveCropOverlay(crop: $liveCrop)
+                        )
                         .overlay(
                             LiveHighlightOverlay(
                                 rects: liveHighlights,
