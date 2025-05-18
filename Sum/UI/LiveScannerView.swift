@@ -10,7 +10,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
     var onNumbersUpdate: @MainActor ([Double]) -> Void
     @Binding var highlights: [CGRect]
     @Binding var highlightConfs: [Float]
-    @Binding var cropRect: CGRect?
+    /// Crop region in unit space (0…1) updated from SwiftUI
+    @Binding var activeCropRect: CGRect?
     var onFixTap: @MainActor (FixCandidate) -> Void = { _ in }
     var onCoordinatorReady: (Coordinator) -> Void = { _ in }
 
@@ -24,7 +25,6 @@ struct LiveScannerView: UIViewControllerRepresentable {
         }
         return c
     }
-
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let scanner = DataScannerViewController(
             recognizedDataTypes: [.text()],
