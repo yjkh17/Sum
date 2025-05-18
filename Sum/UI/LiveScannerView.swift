@@ -100,8 +100,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
 
             tapFixes.removeAll()
             var current = Set<Double>()
-            var rects = [CGRect]()
-            var confs = [Float]()
+            var rects = [CGRect]()      // unit-space rects for highlight overlay
+            var confs = [Float]()       // matching confidences
 
             let hostSize = scanner.view?.bounds.size ?? .zero
 
@@ -123,19 +123,27 @@ struct LiveScannerView: UIViewControllerRepresentable {
                        !value.isNaN {
 
                         let bounds = textItem.bounds
-                        var rect = CGRect(
+                        var pixelRect = CGRect(
                             x: bounds.topLeft.x * hostSize.width,
                             y: bounds.topLeft.y * hostSize.height,
                             width: (bounds.topRight.x - bounds.topLeft.x) * hostSize.width,
                             height: (bounds.bottomLeft.y - bounds.topLeft.y) * hostSize.height
                         )
 
-                        rect = rect.insetBy(dx: -20, dy: -20).integral
+                        pixelRect = pixelRect.insetBy(dx: -20, dy: -20).integral
+
+                        // Convert to unit space for the overlay
+                        let unitRect = CGRect(
+                            x: pixelRect.minX / hostSize.width,
+                            y: pixelRect.minY / hostSize.height,
+                            width: pixelRect.width / hostSize.width,
+                            height: pixelRect.height / hostSize.height
+                        )
 
                         current.insert(value)
-                        rects.append(rect)
+                        rects.append(unitRect)
                         confs.append(0.9)
-                        tapFixes.append((rect: rect, value: value, conf: 0.9))
+                        tapFixes.append((rect: pixelRect, value: value, conf: 0.9))
                     }
                 }
             }
