@@ -10,7 +10,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
     var onNumbersUpdate: @MainActor ([Double]) -> Void
     @Binding var highlights: [CGRect]
     @Binding var highlightConfs: [Float]
-    @Binding var cropRect: CGRect?
+    /// Crop region in unit space (0…1) updated from SwiftUI
+    @Binding var activeCropRect: CGRect?
     var onFixTap: @MainActor (FixCandidate) -> Void = { _ in }
     var onCoordinatorReady: (Coordinator) -> Void = { _ in }
 
@@ -24,7 +25,6 @@ struct LiveScannerView: UIViewControllerRepresentable {
         }
         return c
     }
-
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let scanner = DataScannerViewController(
             recognizedDataTypes: [.text()],
@@ -120,6 +120,15 @@ struct LiveScannerView: UIViewControllerRepresentable {
             let now = CACurrentMediaTime()
             guard now - lastProcessedTime >= frameInterval else { return }
             lastProcessedTime = now
+
+            if cropRect != lastCropRect {
+                lastCropRect = cropRect
+                lastSet.removeAll()
+                valueCounts.removeAll()
+                valueData.removeAll()
+                highlights.wrappedValue.removeAll()
+                highlightConfs.wrappedValue.removeAll()
+            }
 
             tapFixes.removeAll()
             var currentFrame: [(value: Double, pixel: CGRect, unit: CGRect, conf: Float)] = []

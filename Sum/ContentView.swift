@@ -230,7 +230,7 @@ struct ContentView: View {
                             },
                             highlights: $liveHighlights,
                             highlightConfs: $liveConfs,
-                            cropRect: $liveCrop,
+                            activeCropRect: $liveCrop,
                             onFixTap: { fix in
                                 scanVM.currentFix = fix
                             },
