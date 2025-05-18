@@ -4,6 +4,8 @@ import Vision
 import QuartzCore
 import RegexBuilder
 
+/// A SwiftUI wrapper around `DataScannerViewController` that performs live OCR
+/// and publishes recognized numbers for overlay presentation.
 @available(iOS 17.0, *)
 struct LiveScannerView: UIViewControllerRepresentable {
     @Binding var numberSystem: NumberSystem
@@ -52,9 +54,14 @@ struct LiveScannerView: UIViewControllerRepresentable {
         if context.coordinator.system != numberSystem {
             context.coordinator.system = numberSystem
         }
+        // Propagate crop rectangle changes
+        if context.coordinator.cropRect != cropRect {
+            context.coordinator.cropRect = cropRect
+        }
     }
 
     @MainActor
+    /// Delegate handling OCR results and converting them into overlay data.
     final class Coordinator: NSObject, DataScannerViewControllerDelegate {
         let parent: LiveScannerView
         private var lastSet: Set<Double> = []
@@ -65,6 +72,10 @@ struct LiveScannerView: UIViewControllerRepresentable {
         private let onFixTap: (FixCandidate) -> Void
         weak var scannerVC: DataScannerViewController?
         private var tapFixes: [(rect: CGRect, value: Double, conf: Float)] = []
+
+        // Track detection stability across frames
+        private var valueCounts: [Double: Int] = [:]
+        private var valueData: [Double: (pixel: CGRect, unit: CGRect, conf: Float)] = [:]
 
         private var lastProcessedTime: CFTimeInterval = 0
         private let frameInterval: CFTimeInterval = 1.0 / 30.0
@@ -99,11 +110,17 @@ struct LiveScannerView: UIViewControllerRepresentable {
             lastProcessedTime = now
 
             tapFixes.removeAll()
-            var current = Set<Double>()
-            var rects = [CGRect]()      // unit-space rects for highlight overlay
-            var confs = [Float]()       // matching confidences
+            var currentFrame: [(value: Double, pixel: CGRect, unit: CGRect, conf: Float)] = []
 
             let hostSize = scanner.view?.bounds.size ?? .zero
+
+            // Convert crop rect from unit space to pixel space for filtering
+            let cropPixelRect: CGRect? = cropRect.map { r in
+                CGRect(x: r.minX * hostSize.width,
+                       y: r.minY * hostSize.height,
+                       width: r.width * hostSize.width,
+                       height: r.height * hostSize.height)
+            }
 
             for item in items {
                 if case let .text(textItem) = item {
@@ -122,35 +139,56 @@ struct LiveScannerView: UIViewControllerRepresentable {
                        !value.isInfinite,
                        !value.isNaN {
 
-                        let bounds = textItem.bounds
-                        var pixelRect = CGRect(
-                            x: bounds.topLeft.x * hostSize.width,
-                            y: bounds.topLeft.y * hostSize.height,
-                            width: (bounds.topRight.x - bounds.topLeft.x) * hostSize.width,
-                            height: (bounds.bottomLeft.y - bounds.topLeft.y) * hostSize.height
-                        )
+                        let pixelRect = pixelRect(for: textItem.bounds, in: hostSize)
 
-                        pixelRect = pixelRect.insetBy(dx: -20, dy: -20).integral
+                        if let cropPx = cropPixelRect, !pixelRect.intersects(cropPx) {
+                            continue
+                        }
 
-                        // Convert to unit space for the overlay
-                        let unitRect = CGRect(
-                            x: pixelRect.minX / hostSize.width,
-                            y: pixelRect.minY / hostSize.height,
-                            width: pixelRect.width / hostSize.width,
-                            height: pixelRect.height / hostSize.height
-                        )
+                        let unitRect = unitRect(for: pixelRect, in: hostSize)
 
-                        current.insert(value)
-                        rects.append(unitRect)
-                        confs.append(0.9)
-                        tapFixes.append((rect: pixelRect, value: value, conf: 0.9))
+                        currentFrame.append((value: value,
+                                             pixel: pixelRect,
+                                             unit: unitRect,
+                                             conf: 0.9))
                     }
                 }
             }
 
-            if current != lastSet {
-                lastSet = current
-                let nums = Array(current).sorted()
+            // Update detection stability maps
+            let currentValues = Set(currentFrame.map { $0.value })
+            for val in currentValues {
+                valueCounts[val, default: 0] += 1
+            }
+            for key in Array(valueCounts.keys) {
+                if !currentValues.contains(key) {
+                    valueCounts[key] = max((valueCounts[key] ?? 0) - 1, 0)
+                }
+            }
+            for (val, count) in valueCounts where count == 0 {
+                valueCounts.removeValue(forKey: val)
+                valueData.removeValue(forKey: val)
+            }
+            for data in currentFrame {
+                valueData[data.value] = (pixel: data.pixel, unit: data.unit, conf: data.conf)
+            }
+
+            let stableValues = valueCounts.filter { $0.value >= 2 }.map { $0.key }
+            var rects = [CGRect]()
+            var confs = [Float]()
+            tapFixes.removeAll()
+            for val in stableValues {
+                if let data = valueData[val] {
+                    rects.append(data.unit)
+                    confs.append(data.conf)
+                    tapFixes.append((rect: data.pixel, value: val, conf: data.conf))
+                }
+            }
+
+            let stableSet = Set(stableValues)
+            if stableSet != lastSet {
+                lastSet = stableSet
+                let nums = stableValues.sorted()
 
                 Task { @MainActor in
                     withAnimation(.easeInOut(duration: 0.15)) {
@@ -162,6 +200,7 @@ struct LiveScannerView: UIViewControllerRepresentable {
             }
         }
 
+        @MainActor
         func requestFix(at index: Int) {
             guard index < tapFixes.count,
                   let host = scannerVC?.view,
@@ -192,7 +231,33 @@ struct LiveScannerView: UIViewControllerRepresentable {
                                    rect: info.rect,
                                    suggested: Int(info.value),
                                    confidence: info.conf)
-            Task { @MainActor in onFixTap(fix) }
+            onFixTap(fix)
         }
     }
+
+// MARK: - Geometry Helpers
+@available(iOS 17.0, *)
+private extension LiveScannerView.Coordinator {
+    /// Convert a `VNRectangleObservation` to a pixel-space rect relative to the given view size.
+    func pixelRect(for bounds: VNRectangleObservation, in size: CGSize) -> CGRect {
+        var rect = CGRect(
+            x: bounds.topLeft.x * size.width,
+            y: bounds.topLeft.y * size.height,
+            width: (bounds.topRight.x - bounds.topLeft.x) * size.width,
+            height: (bounds.bottomLeft.y - bounds.topLeft.y) * size.height
+        )
+        rect = rect.insetBy(dx: -20, dy: -20).integral
+        return rect
+    }
+
+    /// Convert a pixel-space rectangle to unit-space (0…1) relative to the given view size.
+    func unitRect(for pixelRect: CGRect, in size: CGSize) -> CGRect {
+        CGRect(
+            x: pixelRect.minX / size.width,
+            y: pixelRect.minY / size.height,
+            width: pixelRect.width / size.width,
+            height: pixelRect.height / size.height
+        )
+    }
+}
 }
