@@ -541,7 +541,7 @@ final class ScannerViewModel: ObservableObject {
         NotificationCenter.default.removeObserver(self)
         Task { @MainActor in
             AppStateManager.shared.cancelAllTasks()
+            Self.croppedCache.removeAllObjects()
         }
-        Self.croppedCache.removeAllObjects()
     }
 }

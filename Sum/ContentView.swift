@@ -255,6 +255,12 @@ struct ContentView: View {
                             LiveOverlayView(numbers: scanVM.liveNumbers)
                                 .allowsHitTesting(false)
                         )
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { navVM.isShowingLiveScanner = false }
+                            }
+                        }
+                        .navigationBarTitleDisplayMode(.inline)
                     }
                 } else {
                     Text("Live OCR requires iOS 17 or later.")
