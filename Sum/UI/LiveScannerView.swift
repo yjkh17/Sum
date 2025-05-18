@@ -10,7 +10,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
     var onNumbersUpdate: @MainActor ([Double]) -> Void
     @Binding var highlights: [CGRect]
     @Binding var highlightConfs: [Float]
-    @Binding var cropRect: CGRect?
+    /// Crop region in unit space (0…1) updated from SwiftUI
+    @Binding var activeCropRect: CGRect?
     var onFixTap: @MainActor (FixCandidate) -> Void = { _ in }
     var onCoordinatorReady: (Coordinator) -> Void = { _ in }
 
@@ -53,13 +54,8 @@ struct LiveScannerView: UIViewControllerRepresentable {
             context.coordinator.system = numberSystem
         }
         // Propagate crop rectangle changes
-
-        if context.coordinator.activeCropRect != cropRect {
-            context.coordinator.activeCropRect = cropRect
-
-        if context.coordinator.cropRect != cropRect {
-            context.coordinator.cropRect = cropRect
-
+        if context.coordinator.activeCropRect != activeCropRect {
+            context.coordinator.activeCropRect = activeCropRect
         }
     }
 
@@ -68,27 +64,7 @@ struct LiveScannerView: UIViewControllerRepresentable {
         let parent: LiveScannerView
         private var lastSet: Set<Double> = []
         var system: NumberSystem
-
         var activeCropRect: CGRect? = nil
-        private var lastCropRect: CGRect? = nil
-
-
-        var cropRect: CGRect? = nil {
-            didSet {
-                if oldValue != cropRect {
-                    lastSet.removeAll()
-                    valueCounts.removeAll()
-                    valueData.removeAll()
-                    highlights.wrappedValue.removeAll()
-                    highlightConfs.wrappedValue.removeAll()
-                }
-            }
-        }
-
-        var cropRect: CGRect? = nil
-        private var lastCropRect: CGRect? = nil
-
-
         private let highlights: Binding<[CGRect]>
         private let highlightConfs: Binding<[Float]>
         private let onFixTap: (FixCandidate) -> Void
@@ -146,32 +122,12 @@ struct LiveScannerView: UIViewControllerRepresentable {
             let hostSize = scanner.view?.bounds.size ?? .zero
 
             // Convert crop rect from unit space to pixel space for filtering
-
             let cropPixelRect: CGRect? = activeCropRect.map { r in
-
-            let cropPixelRect: CGRect? = cropRect.map { r in
-
                 CGRect(x: r.minX * hostSize.width,
                        y: r.minY * hostSize.height,
                        width: r.width * hostSize.width,
                        height: r.height * hostSize.height)
             }
-
-
-
-
-
-
-            // Clear history when the crop region changes
-            if cropRect != lastCropRect {
-                valueCounts.removeAll()
-                valueData.removeAll()
-                lastCropRect = cropRect
-            }
-
-
-
-
 
             for item in items {
                 if case let .text(textItem) = item {
