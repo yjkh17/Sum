@@ -243,6 +243,9 @@ struct ContentView: View {
                             print("LiveScanner view appeared")
                         }
                         .overlay(
+                            LiveCropOverlay(crop: $liveCrop)
+                        )
+                        .overlay(
                             LiveHighlightOverlay(
                                 rects: liveHighlights,
                                 rectConfs: liveConfs,
